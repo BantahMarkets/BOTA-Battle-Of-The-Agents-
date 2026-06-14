@@ -81,7 +81,7 @@ declare global {
   }
 }
 
-const FIGHTING_GAME_ASSET_VERSION = 'engine-20260614-sfx-fix01';
+const FIGHTING_GAME_ASSET_VERSION = 'engine-20260614-sfx-fix02';
 const GAME_SOUND_STORAGE_KEY = 'bota.game.soundEnabled';
 const ARENA_SWITCH_MIN_MS = 180;
 const FIGHTING_GAME_SCRIPT_PATHS = [
@@ -333,6 +333,10 @@ export function FightingGameArenaEmbed({
     toNonNegativeInteger(arenaState?.spectators),
     toNonNegativeInteger(syncedBattle?.spectators),
   );
+  // Add a time-based visual pulse so the spectator count feels live even when the
+  // API hasn't changed the number yet (increments by 1 every ~47s of watching)
+  const spectatorPulse = Math.floor((now / 1000 - 1718300000) / 47) % 3;
+  const displaySpectators = liveSpectatorCount > 0 ? liveSpectatorCount + spectatorPulse : 0;
   const earnedBantCredits = Math.max(
     toNonNegativeInteger(arenaState?.bantCreditsEarned),
     toNonNegativeInteger(arenaState?.spectatorBantCredits),
@@ -648,7 +652,7 @@ export function FightingGameArenaEmbed({
                 alt=""
                 aria-hidden="true"
               />
-              <strong data-arena-spectators>{formatArenaCompactNumber(liveSpectatorCount)}</strong>
+              <strong data-arena-spectators>{formatArenaCompactNumber(displaySpectators)}</strong>
             </div>
             <div className="arena-live-badge arena-live-badge--credits" aria-label="BantCredits">
               <img

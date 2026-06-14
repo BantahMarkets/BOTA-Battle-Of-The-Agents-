@@ -966,10 +966,11 @@ class GameEngine {
 
     return {
       attack: [],
-      slash: [sfx("sword-clank.wav"), sfx("sword-clank-alt.wav")],
-      fireSlash: [sfx("sword-clank-alt.wav"), sfx("heavy-hit.wav")],
+      // Sword clanks removed: slash/slashImpact now always use magic synth profiles
+      slash: [],
+      fireSlash: [sfx("heavy-hit.wav")],
       hit: [sfx("body-hit.wav"), sfx("heavy-hit.wav")],
-      slashImpact: [sfx("sword-clank-alt.wav"), sfx("sword-clank.wav")],
+      slashImpact: [],
       fireImpact: [sfx("heavy-hit.wav"), sfx("smoke-puff.mp3")],
       shield: [sfx("shield-block.wav")],
       shieldImpact: [sfx("shield-block.wav")],
@@ -1704,7 +1705,9 @@ class GameEngine {
       return;
     }
 
-    const style = hash % 4 === 0 ? "sword" : "punch";
+    // Always use "punch" style for mascots — swords produce clank SFX which
+    // do not fit the magical BOTA arena aesthetic.
+    const style = "punch";
     const variants = this.getMascotVariants();
     const leftVariant = variants[hash % variants.length];
     const rightVariant = variants[Math.floor(hash / variants.length + 2) % variants.length] || variants[1];
