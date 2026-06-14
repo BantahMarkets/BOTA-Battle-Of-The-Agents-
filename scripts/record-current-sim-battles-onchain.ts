@@ -55,8 +55,10 @@ async function existingOnchainBattleIds() {
     `
       select distinct battle_id
       from onchain_sim_battle_reward_claims
-      where battle_tx_hash is not null or batch_tx_hash is not null
+      where chain_id = $1
+        and (battle_tx_hash is not null or batch_tx_hash is not null)
     `,
+    [CHAIN_ID],
   );
   return new Set(result.rows.map((row) => String(row.battle_id)));
 }

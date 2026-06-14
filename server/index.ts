@@ -39,6 +39,7 @@ import {
 import { startBantahBroAutomationService } from "./bantahBro/automationService";
 import { startBantahBroAgentBattleTelegramBroadcaster } from "./bantahBro/agentBattleTelegramBroadcaster";
 import { startBantahBroAgentBattleSettlementWorker } from "./bantahBro/agentBattleSettlementWorker";
+import { cleanupExpiredListingReservations } from "./bantahBro/gen1EconomyService";
 import { BLINK_ACTION_HEADERS, isBlinkActionRequest } from "./blinkActionHeaders";
 
 // -------------------------------------------------------------------
@@ -105,6 +106,11 @@ function isLocalDevRuntime() {
 
 function shouldUseBantahBroElizaTelegramRuntime() {
   return isBantahBroElizaTelegramEnabled() && !isLocalDevRuntime();
+}
+
+function parseIntegerEnv(name: string, fallback: number) {
+  const raw = Number.parseInt(String(process.env[name] || "").trim(), 10);
+  return Number.isInteger(raw) && raw > 0 ? raw : fallback;
 }
 
 function shouldRunBackgroundWorkers() {
@@ -436,6 +442,23 @@ async function startHttpServer() {
       } catch (err) {
         console.error("[WARN] Failed to start BantahBro battle settlement worker:", err);
       }
+      try {
+        const cleanupIntervalMs = Math.max(10_000, parseIntegerEnv("GEN1_RESERVATION_CLEANUP_INTERVAL_MS", 30_000));
+        setTimeout(() => {
+          void cleanupExpiredListingReservations().catch((error) => {
+            console.error("[WARN] Initial Gen1 reservation cleanup failed:", error);
+          });
+        }, 0).unref?.();
+        const cleanupTimer = setInterval(() => {
+          void cleanupExpiredListingReservations().catch((error) => {
+            console.error("[WARN] Gen1 reservation cleanup failed:", error);
+          });
+        }, cleanupIntervalMs);
+        cleanupTimer.unref?.();
+        console.log(`[OK] Gen1 reservation cleanup worker started: intervalMs=${cleanupIntervalMs}`);
+      } catch (err) {
+        console.error("[WARN] Failed to start Gen1 reservation cleanup worker:", err);
+      }
 
       try {
         const automationStatus = await startBantahBroAutomationService();
@@ -581,6 +604,13 @@ export async function initAppForServerless() {
         );
       } catch (err) {
         console.error("[WARN] BantahBro battle settlement worker failed (non-critical)", err);
+      }
+
+      try {
+        await cleanupExpiredListingReservations();
+        console.log("[OK] Serverless Gen1 reservation cleanup completed");
+      } catch (err) {
+        console.error("[WARN] Serverless Gen1 reservation cleanup failed:", err);
       }
 
       try {

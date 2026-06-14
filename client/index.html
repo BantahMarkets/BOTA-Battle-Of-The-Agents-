@@ -33,44 +33,46 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Telegram Mini Apps Analytics SDK -->
     <script>
-      window.__BOTA_TELEGRAM_ANALYTICS_CONFIG__ = {
-        token: "%VITE_TELEGRAM_ANALYTICS_TOKEN%",
-        tokenAlt: "%VITE_TG_ANALYTICS_TOKEN%",
-        tokenDefault: "eyJhcHBfbmFtZSI6ImJhdHRsZV9vZl90aGVfYWdlbnRzIiwiYXBwX3VybCI6Imh0dHBzOi8vdC5tZS9CYW50YWhYQlRfYm90IiwiYXBwX2RvbWFpbiI6Imh0dHBzOi8vYm90YS5iYW50YWguZnVuLyJ9!UA/IErFx0v1L7Ury0Bbr82ofH6VwiRQmgXHjQtq9dwA=",
-        appName: "%VITE_TELEGRAM_ANALYTICS_IDENTIFIER%",
-        appNameAlt: "%VITE_TELEGRAM_ANALYTICS_APP_NAME%",
-        appNameShort: "%VITE_TG_ANALYTICS_APP_NAME%",
-        appNameDefault: "battle_of_the_agents"
-      };
-      window.initTelegramAnalytics = function initTelegramAnalytics() {
-        if (window.__BOTA_TELEGRAM_ANALYTICS_READY__) return;
-
-        var config = window.__BOTA_TELEGRAM_ANALYTICS_CONFIG__ || {};
-        var pickConfiguredValue = function pickConfiguredValue(values) {
-          for (var index = 0; index < values.length; index += 1) {
-            var value = String(values[index] || "").trim();
-            if (value && value.indexOf("%VITE_") !== 0) return value;
-          }
-          return "";
+      (function () {
+        var analyticsConfig = {
+          token: "eyJhcHBfbmFtZSI6ImJhdHRsZV9vZl90aGVfYWdlbnRzIiwiYXBwX3VybCI6Imh0dHBzOi8vdC5tZS9CYW50YWhYQlRfYm90IiwiYXBwX2RvbWFpbiI6Imh0dHBzOi8vYm90YS5iYW50YWguZnVuLyJ9!UA/IErFx0v1L7Ury0Bbr82ofH6VwiRQmgXHjQtq9dwA=",
+          appName: "battle_of_the_agents"
         };
-        var token = pickConfiguredValue([config.token, config.tokenAlt, config.tokenDefault]);
-        var appName = pickConfiguredValue([
-          config.appName,
-          config.appNameAlt,
-          config.appNameShort,
-          config.appNameDefault
-        ]);
 
-        if (!token || !appName || !window.telegramAnalytics || !window.telegramAnalytics.init) return;
+        function initAnalytics() {
+          if (window.__BOTA_TELEGRAM_ANALYTICS_READY__) return;
 
-        window.telegramAnalytics.init({ token: token, appName: appName });
-        window.__BOTA_TELEGRAM_ANALYTICS_READY__ = true;
-      };
+          if (!window.telegramAnalytics || !window.telegramAnalytics.init) {
+            window.__BOTA_TELEGRAM_ANALYTICS_RETRIES__ =
+              (window.__BOTA_TELEGRAM_ANALYTICS_RETRIES__ || 0) + 1;
+
+            if (window.__BOTA_TELEGRAM_ANALYTICS_RETRIES__ <= 40) {
+              window.setTimeout(initAnalytics, 250);
+            }
+            return;
+          }
+
+          try {
+            window.telegramAnalytics.init({
+              token: analyticsConfig.token,
+              appName: analyticsConfig.appName
+            });
+            window.__BOTA_TELEGRAM_ANALYTICS_READY__ = true;
+          } catch (error) {
+            window.__BOTA_TELEGRAM_ANALYTICS_ERROR__ = error;
+          }
+        }
+
+        window.__BOTA_TELEGRAM_ANALYTICS_CONFIG__ = analyticsConfig;
+        window.initAnalytics = initAnalytics;
+        window.initTelegramAnalytics = initAnalytics;
+        window.addEventListener("load", initAnalytics);
+      })();
     </script>
     <script
       async
       src="https://tganalytics.xyz/index.js"
-      onload="window.initTelegramAnalytics && window.initTelegramAnalytics()"
+      onload="initAnalytics()"
       type="text/javascript"
     ></script>
     <!-- Paystack SDK -->

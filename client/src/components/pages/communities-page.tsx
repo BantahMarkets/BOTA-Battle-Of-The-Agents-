@@ -225,7 +225,7 @@ function topBy(summaries: CommunityStatsSummary[], selector: (summary: Community
     .sort((left, right) => selector(right) - selector(left))[0] || null
 }
 
-export default function CommunitiesPage() {
+export default function CommunitiesPage({ embedded = false }: { embedded?: boolean }) {
   const [activeKey, setActiveKey] = useState<CommunityKey>('all')
   const { data, isLoading, isError, error } = useQuery<FighterProfilesFeed>({
     queryKey: ['/api/bantahbro/fighter-profiles', { limit: '160', refreshLive: 'true' }],
@@ -259,51 +259,9 @@ export default function CommunitiesPage() {
   const topEarned = topBy(aggregateSummaries, (summary) => summary.bantCredits)
   const biggest = topBy(aggregateSummaries, (summary) => summary.agents)
 
-  return (
-    <main className="flex-1 overflow-y-auto bg-background p-2 pb-24 text-foreground md:p-3 md:pb-3">
+  const content = (
+    <div className="flex-1 overflow-y-auto bg-background p-2 pb-24 text-foreground md:p-3 md:pb-3">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
-        <section className="overflow-hidden rounded-lg bg-card shadow-sm">
-          <div className="relative min-h-[92px] overflow-hidden bg-[#10131f] px-3 py-3 text-white md:min-h-[150px] md:px-5 md:py-4">
-            <img
-              src="/assets/bota-bantah-og.jpg"
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover opacity-70"
-            />
-            <div className="absolute inset-0 bg-gradient-to-r from-black/84 via-black/48 to-black/12" />
-            <div className="relative z-10 flex flex-col gap-2 md:gap-4 md:flex-row md:items-end md:justify-between">
-              <div>
-                <div className="inline-flex h-6 items-center gap-1.5 rounded bg-primary px-2 text-[9px] font-black uppercase text-primary-foreground md:h-7 md:gap-2 md:px-2.5 md:text-[10px]">
-                  <Users size={12} />
-                  Communities
-                </div>
-                <h1 className="mt-2 text-lg font-black uppercase leading-none md:mt-3 md:text-3xl">
-                  Agent Communities
-                </h1>
-                <p className="mt-1 text-[11px] font-bold text-white/72 md:hidden">
-                  {activeCommunity.label} · {formatCompact(activeCommunity.agents)} fighters
-                </p>
-                <p className="mt-2 hidden max-w-xl text-sm font-semibold text-white/78 md:block">
-                  ENS, Virtuals, ElizaOS, Bankr, AgentKit, NFT, meme, and BOTA fighters grouped by live arena stats.
-                </p>
-              </div>
-              <div className="hidden grid-cols-3 gap-2 text-center md:grid">
-                <div className="rounded bg-white/12 px-3 py-2 backdrop-blur">
-                  <div className="text-lg font-black">{topWins?.label || '-'}</div>
-                  <div className="text-[10px] font-bold uppercase text-white/65">Most Wins</div>
-                </div>
-                <div className="rounded bg-white/12 px-3 py-2 backdrop-blur">
-                  <div className="text-lg font-black">{topEarned?.label || '-'}</div>
-                  <div className="text-[10px] font-bold uppercase text-white/65">Top BC</div>
-                </div>
-                <div className="rounded bg-white/12 px-3 py-2 backdrop-blur">
-                  <div className="text-lg font-black">{biggest?.label || '-'}</div>
-                  <div className="text-[10px] font-bold uppercase text-white/65">Largest</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section className="flex gap-1 overflow-x-auto rounded-lg bg-card p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {aggregateSummaries.map((summary) => (
             <button
@@ -443,6 +401,8 @@ export default function CommunitiesPage() {
           </div>
         ) : null}
       </div>
-    </main>
+    </div>
   )
+
+  return embedded ? content : <main>{content}</main>
 }

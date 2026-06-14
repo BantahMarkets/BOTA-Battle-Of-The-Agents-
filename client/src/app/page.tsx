@@ -235,6 +235,7 @@ export default function Home({
       content,
       <RightPanel
         selectedToken={selectedToken}
+        activeSection={activeSection}
         onNavigate={handleNavigate}
         onOpenBattle={handleOpenBattle}
       />,

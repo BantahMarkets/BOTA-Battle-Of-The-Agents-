@@ -1,5 +1,3 @@
-'use client'
-
 import { useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePrivy, useWallets } from '@privy-io/react-auth'
@@ -14,13 +12,31 @@ import {
   Settings,
   Swords,
   Trophy,
+  PackageOpen,
+  Wrench,
+  ShieldHalf,
+  Box,
+  ScrollText
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/hooks/use-toast'
 import { apiRequest } from '@/lib/queryClient'
 import { executeBantCreditRewardClaimTx, type OnchainRuntimeConfig } from '@/lib/onchainEscrow'
 import type { BotaFighterProfile } from '@shared/botaFighterProfile'
+import { useBotaInventory } from '@/hooks/useBotaInventory'
+import { BotaInventoryBrowser } from '@/components/BotaInventoryBrowser'
+import { useUnopenedPacks, usePackHistory } from '@/hooks/useGen1Packs'
+import { BotaPackOpener } from '@/components/BotaPackOpener'
 
 type OnchainBantCreditClaim = {
   id: string
@@ -178,9 +194,12 @@ export default function ProfilePage() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [copied, setCopied] = useState(false)
-  const [activeTab, setActiveTab] = useState<'fighters' | 'queue' | 'history' | 'claim' | 'settings'>('fighters')
+  const [activeTab, setActiveTab] = useState<'fighters' | 'queue' | 'history' | 'claim' | 'packs' | 'tools' | 'loadouts' | 'inventory-history' | 'settings'>('fighters')
   const walletAddress = getWalletAddress(user)
   const displayAddress = shortenAddress(walletAddress)
+  const [packToOpen, setPackToOpen] = useState<string | null>(null)
+  const [listingFighterId, setListingFighterId] = useState<string | null>(null)
+  const [listingPrice, setListingPrice] = useState('10')
 
   const { data: rewardsData } = useQuery<RewardsProfileResponse>({
     queryKey: ['/api/bantahbro/rewards', 'profile'],
@@ -202,6 +221,13 @@ export default function ProfilePage() {
     enabled: isAuthenticated,
     staleTime: 60_000,
   })
+  
+  const { tools: inventoryTools, equipTool, unequipTool } = useBotaInventory(walletAddress)
+  const { data: packsData } = useUnopenedPacks(walletAddress)
+  const { data: historyData } = usePackHistory(walletAddress)
+
+  const unopenedPacks = packsData?.unopenedPacks || []
+  const packHistory = historyData?.history || []
 
   const offchainBantCredits = Math.max(
     0,
@@ -317,6 +343,22 @@ export default function ProfilePage() {
     },
   })
 
+  const listAgentMutation = useMutation({
+    mutationFn: async (data: { agentId: string; priceUsdt: string }) => {
+      const res = await apiRequest('POST', '/api/bantahbro/marketplace/list-agent', data)
+      return res
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/bantahbro/profile'] })
+      queryClient.invalidateQueries({ queryKey: ['/api/bantahbro/fighter-profiles'] })
+      toast({ title: 'Success', description: 'Fighter listed on marketplace' })
+      setListingFighterId(null)
+    },
+    onError: (err: any) => {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' })
+    }
+  })
+
   const copyAddress = () => {
     if (!walletAddress) return
     navigator.clipboard.writeText(walletAddress)
@@ -367,6 +409,55 @@ export default function ProfilePage() {
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      {packToOpen && (
+        <BotaPackOpener 
+          packInstanceId={packToOpen} 
+          onClose={() => setPackToOpen(null)}
+          onRevealComplete={() => {
+            queryClient.invalidateQueries({ queryKey: ['/api/bantahbro/gen1/packs/inventory'] })
+            queryClient.invalidateQueries({ queryKey: ['/api/bantahbro/inventory'] })
+            queryClient.invalidateQueries({ queryKey: ['/api/bantahbro/gen1/packs/history'] })
+          }}
+        />
+      )}
+
+      <Dialog open={!!listingFighterId} onOpenChange={(open) => !open && setListingFighterId(null)}>
+        <DialogContent className="sm:max-w-[380px] bantahbro-next-ui">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-black">List Fighter for Sale</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Set a price in USDT for your fighter to list it on the public Marketplace.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <label htmlFor="price" className="text-xs font-black uppercase text-foreground">
+                Price (USDT)
+              </label>
+              <input
+                id="price"
+                type="number"
+                min="0.1"
+                step="0.1"
+                value={listingPrice}
+                onChange={(e) => setListingPrice(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-black ring-offset-background"
+                placeholder="10.0"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setListingFighterId(null)}>Cancel</Button>
+            <Button 
+              onClick={() => listingFighterId && listAgentMutation.mutate({ agentId: listingFighterId, priceUsdt: listingPrice })}
+              disabled={listAgentMutation.isPending}
+            >
+              {listAgentMutation.isPending ? 'Listing...' : 'Confirm Listing'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
       <div className="flex-1 flex flex-col overflow-hidden rounded border border-border bg-card">
         <div className="border-b border-border bg-background px-3 py-2.5">
           <div className="flex items-center gap-2">
@@ -414,14 +505,18 @@ export default function ProfilePage() {
           {([
             ['fighters', 'Fighters'],
             ['queue', 'Queue'],
-            ['history', 'History'],
+            ['history', 'Battle History'],
+            ['packs', 'Packs'],
+            ['tools', 'Tools'],
+            ['loadouts', 'Loadouts'],
+            ['inventory-history', 'Inv. History'],
             ['claim', 'Claim'],
             ['settings', 'Settings'],
           ] as const).map(([tab, label]) => (
             <button
               key={tab}
               type="button"
-              onClick={() => setActiveTab(tab)}
+              onClick={() => setActiveTab(tab as any)}
               className={`shrink-0 border-b-2 px-3 py-2 text-[11px] font-black uppercase tracking-wide transition ${
                 activeTab === tab
                   ? 'border-primary text-foreground'
@@ -455,10 +550,20 @@ export default function ProfilePage() {
                         {fighter.badgeLabel || fighter.origin} / #{fighter.rank || '-'}
                       </div>
                     </div>
-                    <div className="text-right text-xs">
-                      <div className="font-black text-foreground">{fighter.wins}W-{fighter.losses}L</div>
-                      <div className="font-mono text-yellow-300">{formatNumber(fighter.bantCreditsEarned)} BC</div>
-                    </div>
+                    <div className="flex flex-col items-end gap-1 text-right text-xs">
+                        <div>
+                          <div className="font-black text-foreground">{fighter.wins}W-{fighter.losses}L</div>
+                          <div className="font-mono text-yellow-300">{formatNumber(fighter.bantCreditsEarned)} BC</div>
+                        </div>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-6 text-[10px] px-2 uppercase"
+                          onClick={() => setListingFighterId(fighter.agentId)}
+                        >
+                          List for Sale
+                        </Button>
+                      </div>
                   </div>
                 ))
               ) : (
@@ -530,6 +635,110 @@ export default function ProfilePage() {
                 ))
               ) : (
                 <EmptyState icon={<History size={16} />} title="No battle history yet" body="Wins, losses, queue entries, and resolved Arena records for your fighters will appear here." />
+              )}
+            </div>
+          ) : activeTab === 'packs' ? (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center px-1">
+                <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Your Supply Drops</h3>
+                <a
+                  href="/bota?section=marketplace&tab=packs"
+                  className="text-xs font-bold text-primary hover:underline"
+                >
+                  Buy more packs &rarr;
+                </a>
+              </div>
+              
+              {unopenedPacks.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {unopenedPacks.map((pack: any) => (
+                    <div key={pack.pack_instance_id} className="flex flex-col items-center justify-center p-6 border-2 border-primary/20 rounded-xl bg-card relative overflow-hidden">
+                      <div className="absolute top-0 right-0 px-2 py-1 bg-black/60 text-[10px] text-muted-foreground uppercase font-black">
+                        {formatDate(pack.created_at)}
+                      </div>
+                      <Box size={48} className="text-primary mb-3" />
+                      <h4 className="text-lg font-black text-foreground mb-1">{pack.display_name}</h4>
+                      <div className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">
+                        {pack.type} Tier
+                      </div>
+                      <button 
+                        onClick={() => setPackToOpen(pack.pack_instance_id)}
+                        className="w-full py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-black text-sm uppercase rounded shadow-[0_0_15px_rgba(var(--primary),0.3)] transition-all active:scale-95"
+                      >
+                        Open Pack
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-md border border-border bg-background/60 p-6 text-center mt-2">
+                  <PackageOpen size={32} className="mx-auto text-muted-foreground mb-3" />
+                  <h3 className="text-sm font-black text-foreground mb-1 uppercase tracking-wider">No Unopened Packs</h3>
+                  <p className="text-xs text-muted-foreground mb-4 max-w-sm mx-auto">
+                    You don't have any unopened Tactical Supply Drops. Purchase packs from the store to unlock powerful V2 Combat Tools.
+                  </p>
+                  <a
+                    href="/bota?section=marketplace&tab=packs"
+                    className="bb-tap inline-flex items-center justify-center gap-2 rounded-md border border-primary/50 bg-primary px-4 py-2 text-xs font-black text-primary-foreground transition hover:bg-primary/90"
+                  >
+                    Visit Store for Packs
+                  </a>
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'inventory-history' ? (
+            <div className="space-y-3">
+              <div className="px-1">
+                <h3 className="text-sm font-black uppercase tracking-widest text-foreground">Inventory History</h3>
+                <p className="text-xs text-muted-foreground">Recent packs opened and tools acquired.</p>
+              </div>
+              
+              {packHistory.length > 0 ? (
+                packHistory.map((item: any) => (
+                  <div key={item.event_id} className="rounded-md border border-border bg-background/60 p-3 flex gap-3 items-start">
+                    <div className="mt-1 bg-primary/10 p-2 rounded shrink-0">
+                      <ScrollText size={16} className="text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex justify-between items-start">
+                        <div className="text-sm font-black text-foreground">Opened {item.pack_name}</div>
+                        <div className="text-[10px] font-bold text-muted-foreground">{formatDate(item.created_at)}</div>
+                      </div>
+                      <div className="mt-2 text-xs text-muted-foreground border-l-2 border-primary/30 pl-2 ml-1">
+                        Acquired: <strong className={`font-black uppercase ${
+                          item.tool_tier === 'epic' ? 'text-purple-400' : 
+                          item.tool_tier === 'rare' ? 'text-blue-400' : 'text-gray-400'
+                        }`}>{item.tool_tier}</strong> tool for <strong className="text-foreground uppercase">{item.tool_role}</strong> slot.
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <EmptyState icon={<History size={16} />} title="No Inventory History" body="Your record of opened packs and acquired tools will appear here." />
+              )}
+            </div>
+          ) : activeTab === 'tools' ? (
+            <div className="space-y-2">
+              <div className="mb-2 text-[10px] font-black uppercase text-muted-foreground">Your Tool Arsenal</div>
+              <BotaInventoryBrowser
+                walletAddress={walletAddress || ''}
+                tools={inventoryTools}
+                onEquip={(toolId) => equipTool({ inventoryId: toolId, fighterId: 'bota:default', slot: 'primary' })}
+                onUnequip={(toolId) => unequipTool({ fighterId: 'bota:default', slot: 'primary' })}
+              />
+            </div>
+          ) : activeTab === 'loadouts' ? (
+            <div className="space-y-2">
+              <div className="mb-2 text-[10px] font-black uppercase text-muted-foreground">Active Loadouts</div>
+              {inventoryTools.filter(t => t.isEquipped).length > 0 ? (
+                <BotaInventoryBrowser
+                  walletAddress={walletAddress || ''}
+                  tools={inventoryTools.filter(t => t.isEquipped)}
+                  onEquip={(toolId) => equipTool({ inventoryId: toolId, fighterId: 'bota:default', slot: 'primary' })}
+                  onUnequip={(toolId) => unequipTool({ fighterId: 'bota:default', slot: 'primary' })}
+                />
+              ) : (
+                <EmptyState icon={<ShieldHalf size={16} />} title="No Equipped Loadouts" body="You haven't equipped any tools to your fighters yet. Head to the Tools tab to assign gear." />
               )}
             </div>
           ) : activeTab === 'claim' ? (

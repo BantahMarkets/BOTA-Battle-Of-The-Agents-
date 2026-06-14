@@ -3,6 +3,11 @@ import { z, ZodError } from "zod";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ethers } from "ethers";
 import {
+  botaToolInventory,
+  botaFighterLoadout,
+  botaToolsCatalog,
+} from "@shared/schema";
+import {
   bantahBroAlertSchema,
   bantahBroBoostMarketRequestSchema,
   bantahBroBxbtRewardRequestSchema,
@@ -53,6 +58,7 @@ import {
   boostBantahBroMarket,
   createBantahBroMarketFromSignal,
 } from "../bantahBro/marketService";
+import onchainPaymentService from "../bantahBro/onchainPaymentService";
 import {
   createBantahBroP2PMarket,
   getBantahBroLeaderboard,
@@ -105,7 +111,9 @@ import { runBotaLifecycleNotificationsOnce } from "../bantahBro/botaLifecycleNot
 import { simulateBotaArenaBattleFromLiveBattle } from "../bantahBro/botaArenaEngine";
 import {
   getBotaFighterProfile,
+  getBotaEnsAgentContext,
   importBotaFighterProfile,
+  listBotaEnsAgentDiscovery,
   listBotaFighterCommunityStats,
   listBotaFighterProfilesForOwner,
   listBotaFighterProfiles,
@@ -164,6 +172,13 @@ import {
   recordBantahBroTrollboxMessage,
 } from "../bantahBro/trollboxService";
 import {
+  buildBotaBnbAgentIdentityForProfile,
+  getBotaBnbAgentRegistration,
+  upsertBotaBnbAgentRegistration,
+} from "../bantahBro/bnbAgentIdentityService";
+import gen1Economy from "../bantahBro/gen1EconomyService";
+import { Gen1EconomyEngine, BC_MINT_RATE } from "../bantahBro/gen1EconomyEngine";
+import {
   ensureOnchainSimBattleClaimsTable,
   listOnchainSimBattleClaimsForUser,
   markOnchainSimBattleClaimTx,
@@ -174,11 +189,14 @@ import { prepareBantahBroWalletAction } from "../bantahBro/walletActionSurface";
 import { PrivyAuthMiddleware, verifyPrivyToken } from "../privyAuth";
 import { db } from "../db";
 import { getOnchainServerConfig } from "../onchainConfig";
+import packService from "../bantahBro/packService";
+import agentMemoryService from "../bantahBro/agentMemoryService";
+import decidePackOpen from "../bantahBro/packDecisionEngine";
 import { storage } from "../storage";
 import { getBantahBroTelegramBot } from "../telegramBot";
 import { getTelegramSync } from "../telegramSync";
 import { sendManagedBantahAgentRuntimeMessage } from "../bantahElizaRuntimeManager";
-import { agents, transactions, users } from "@shared/schema";
+import { agents, transactions, users, marketplaceListings } from "@shared/schema";
 import {
   BANTCREDIT_BATTLE_WATCH_REWARD_TIERS,
   BANTCREDIT_BATTLE_WATCH_TRANSACTION_TYPE,
@@ -188,6 +206,8 @@ import { bantahBroWalletPrepareRequestSchema } from "@shared/bantahBroWallet";
 import { normalizeEvmAddress, parseWalletAddresses } from "@shared/onchainConfig";
 
 const router = Router();
+
+const economyEngine = new Gen1EconomyEngine();
 
 const BANTCREDIT_TRANSACTION_TYPES = [
   "signup_bonus",
@@ -343,6 +363,17 @@ const onchainBantCreditClaimTxSchema = z.object({
   txHash: z.string().trim().regex(/^0x[a-fA-F0-9]{64}$/),
 });
 
+const botaBnbAgentRegistrationSchema = z.object({
+  chainId: z.coerce.number().int().positive().optional(),
+  registryAddress: z.string().trim().max(128).optional().nullable(),
+  bnbAgentId: z.string().trim().max(255).optional().nullable(),
+  metadataUri: z.string().trim().max(1000).optional().nullable(),
+  registrationTxHash: z.string().trim().regex(/^0x[a-fA-F0-9]{64}$/).optional().nullable(),
+  status: z.enum(["ready_to_register", "registered", "disabled", "failed"]).optional(),
+  registeredBy: z.string().trim().max(128).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
 const agentBattleP2PStakeSchema = z.object({
   sideId: z.string().trim().min(1).max(500),
   stakeAmount: z.coerce.number().positive().max(1_000_000),
@@ -440,6 +471,8 @@ function handleError(res: any, error: unknown) {
   const status =
     typeof error === "object" && error && typeof (error as { status?: unknown }).status === "number"
       ? Number((error as { status: number }).status)
+      : typeof error === "object" && error && typeof (error as { statusCode?: unknown }).statusCode === "number"
+        ? Number((error as { statusCode: number }).statusCode)
       : undefined;
   const message = error instanceof Error ? error.message : "BantahBro scan failed";
   if (status) {
@@ -895,6 +928,240 @@ router.get("/ens/preview", async (req, res) => {
   }
 });
 
+router.get("/ens/agents", async (req, res) => {
+  try {
+    const refreshLive = String(req.query.refreshLive ?? "true").trim().toLowerCase() !== "false";
+    res.json(await listBotaEnsAgentDiscovery({
+      limit: parseLimit(req.query.limit, 50, 100),
+      refreshLive,
+    }));
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/ens/agents/:agentId/context", async (req, res) => {
+  try {
+    const context = await getBotaEnsAgentContext(
+      String(req.params.agentId || ""),
+      String(req.query.refreshLive ?? "true").trim().toLowerCase() !== "false",
+    );
+    if (!context) {
+      return res.status(404).json({ message: "ENS BOTA agent context not found" });
+    }
+    res.json(context);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/fighters/:agentId/profile", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || "");
+    const result = await db.execute(sql`SELECT * FROM "bota_fighter_combat_profiles" WHERE "fighter_id" = ${agentId} LIMIT 1;`);
+    const profile = (result as any)?.rows?.[0] || Array.isArray(result) && result[0];
+    if (!profile) return res.status(404).json({ message: "Combat profile not found" });
+    res.json(profile);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/fighters/:agentId/profile/generate", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || "");
+    const baseProfile = await getBotaFighterProfile(agentId, false);
+    if (!baseProfile) return res.status(404).json({ message: "Base fighter profile not found" });
+    
+    const botaCombatProfileService = require("../bantahBro/botaCombatProfileService").default;
+    
+    let generated;
+    if (baseProfile.origin === "ens") {
+      generated = botaCombatProfileService.generateENSCombatProfile({
+        name: baseProfile.displayName,
+        registrationAgeDays: 100, // mock
+        hasEmoji: false,
+        isPalindrome: false,
+        isNumericOnly: false,
+        isThreeLetter: false,
+      });
+      await botaCombatProfileService.upsertCombatProfile(agentId, "ENS", generated);
+    } else {
+      generated = botaCombatProfileService.generateAgentCombatProfile({
+        goal: baseProfile.archetype,
+        description: baseProfile.league,
+        personality: baseProfile.agentClass,
+      });
+      await botaCombatProfileService.upsertCombatProfile(agentId, "AGENT", generated);
+    }
+    
+    res.json(generated);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/marketplace/list", async (req, res) => {
+  try {
+    const { sellerWallet, fighterId, priceUsdt } = req.body;
+    const botaMarketplaceService = require("../bantahBro/botaMarketplaceService").default;
+    const result = await botaMarketplaceService.listFighterForSale(sellerWallet, fighterId, Number(priceUsdt));
+    res.json(result);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/marketplace/buy", async (req, res) => {
+  try {
+    const { buyerWallet, listingId } = req.body;
+    const botaMarketplaceService = require("../bantahBro/botaMarketplaceService").default;
+    const result = await botaMarketplaceService.buyFighter(buyerWallet, listingId);
+    res.json(result);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/marketplace/cancel", async (req, res) => {
+  try {
+    const { sellerWallet, listingId } = req.body;
+    const botaMarketplaceService = require("../bantahBro/botaMarketplaceService").default;
+    const result = await botaMarketplaceService.cancelListing(sellerWallet, listingId);
+    res.json(result);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// --- BOTA V2 INVENTORY / LOADOUT ---
+router.get("/inventory/:walletAddress", async (req, res) => {
+  try {
+    const walletAddress = String(req.params.walletAddress || "").trim();
+    // Fetch inventory
+    const inventory = await db.query.botaToolInventory.findMany({
+      where: eq(botaToolInventory.ownerWallet, walletAddress)
+    });
+    // Fetch catalog
+    const catalog = await db.query.botaToolsCatalog.findMany();
+    const catalogMap = new Map(catalog.map(c => [c.id, c]));
+
+    const tools = inventory.map(inv => {
+      const cat = catalogMap.get(inv.toolCatalogId);
+      return {
+        id: inv.id,
+        name: cat?.name || "Unknown Tool",
+        tier: cat?.tier || "common",
+        role: cat?.role || "primary",
+        powerRating: cat?.powerRating || 0,
+        effectDesc: cat?.effectDesc || "",
+        isEquipped: !!inv.equippedToFighterId,
+      };
+    });
+    res.json({ tools });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/inventory/equip", async (req, res) => {
+  try {
+    const { walletAddress, inventoryId, fighterId, slot } = req.body;
+    const botaLoadoutService = require("../bantahBro/botaLoadoutService").default;
+    await botaLoadoutService.equipTool(walletAddress, fighterId, inventoryId, slot);
+    res.json({ success: true });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/inventory/unequip", async (req, res) => {
+  try {
+    const { walletAddress, fighterId, slot } = req.body;
+    const botaLoadoutService = require("../bantahBro/botaLoadoutService").default;
+    await botaLoadoutService.unequipTool(walletAddress, fighterId, slot);
+    res.json({ success: true });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/ens/agents/:agentId/battles", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || "");
+    const feed = await listBotaArenaBattleRecordsForAgents([agentId], parseLimit(req.query.limit, 25, 100));
+    res.json({
+      agentId,
+      records: feed.records,
+      updatedAt: feed.updatedAt,
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/bnb/agents/:agentId/context", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || "");
+    const profile = await getBotaFighterProfile(
+      agentId,
+      String(req.query.refreshLive ?? "true").trim().toLowerCase() !== "false",
+    );
+    if (!profile) {
+      return res.status(404).json({ message: "BOTA fighter profile not found" });
+    }
+    const registration = await getBotaBnbAgentRegistration(profile.agentId).catch(() => null);
+    const identity = buildBotaBnbAgentIdentityForProfile(profile, registration);
+    res.json(identity);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/bnb/agents/:agentId/metadata", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || "");
+    const profile = await getBotaFighterProfile(
+      agentId,
+      String(req.query.refreshLive ?? "true").trim().toLowerCase() !== "false",
+    );
+    if (!profile) {
+      return res.status(404).json({ message: "BOTA fighter profile not found" });
+    }
+    const registration = await getBotaBnbAgentRegistration(profile.agentId).catch(() => null);
+    const identity = buildBotaBnbAgentIdentityForProfile(profile, registration);
+    res.json({
+      ...identity.metadata,
+      bnbAgentIdentity: {
+        standard: identity.standard,
+        status: identity.status,
+        chain: identity.chain,
+        registry: identity.registry,
+        registration: identity.registration,
+        metadataUri: identity.metadataUri,
+        sdk: identity.sdk,
+      },
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/bnb/agents/:agentId/battles", async (req, res) => {
+  try {
+    const agentId = String(req.params.agentId || "");
+    const feed = await listBotaArenaBattleRecordsForAgents([agentId], parseLimit(req.query.limit, 25, 100));
+    res.json({
+      agentId,
+      chainId: 56,
+      records: feed.records,
+      updatedAt: feed.updatedAt,
+    });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
 function normalizeBotaAgentId(value: unknown) {
   return String(value || "")
     .trim()
@@ -1086,13 +1353,95 @@ router.get("/fighter-profiles", async (req, res) => {
       refreshLive,
       origin: parseBotaFighterOrigin(req.query.origin),
     });
+
+    const activeListings = await db.query.marketplaceListings.findMany({
+      where: eq(marketplaceListings.status, "active"),
+    });
+    const listingsByFighterId = new Map();
+    for (const listing of activeListings) {
+      listingsByFighterId.set(listing.fighterId, listing);
+    }
+    
+    const profilesWithListings = feed.profiles.map((p) => {
+      const listing = listingsByFighterId.get(p.agentId);
+      if (listing) {
+        return {
+          ...p,
+          metadata: {
+            ...(p.metadata || {}),
+            marketplaceListing: {
+              priceUsdt: Number(listing.priceUsdt),
+              sellerWallet: listing.sellerWallet,
+              listedAt: listing.listedAt,
+            },
+          },
+        };
+      }
+      return p;
+    });
+
     res.json({
-      ...feed,
+      profiles: profilesWithListings,
+      updatedAt: feed.updatedAt,
       sources: {
         liveArena: refreshLive,
         note: "BOTA fighter profiles are the canonical arena identity layer for agents.",
       },
     });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/marketplace/list-agent", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const { agentId, priceUsdt } = req.body;
+    if (!agentId || !priceUsdt) {
+      return res.status(400).json({ message: "agentId and priceUsdt are required" });
+    }
+    
+    const dbUser = await storage.getUser(req.user.id).catch(() => null);
+    const sellerWallet = dbUser?.primaryWalletAddress || (dbUser?.walletAddresses || [])[0] || req.user.walletAddress;
+    
+    if (!sellerWallet) {
+      return res.status(403).json({ message: "No wallet associated with account." });
+    }
+
+    const priceNum = Number(priceUsdt);
+    if (isNaN(priceNum) || priceNum <= 0) {
+      return res.status(400).json({ message: "Invalid price." });
+    }
+
+    const profile = await getBotaFighterProfile(agentId, false);
+    if (!profile) {
+      return res.status(404).json({ message: "Fighter profile not found." });
+    }
+    
+    if (profile.walletAddress?.toLowerCase() !== sellerWallet.toLowerCase()) {
+      return res.status(403).json({ message: "You do not own this fighter." });
+    }
+
+    const existing = await db.query.marketplaceListings.findFirst({
+      where: and(
+        eq(marketplaceListings.fighterId, agentId),
+        eq(marketplaceListings.status, "active")
+      )
+    });
+
+    if (existing) {
+      await db.update(marketplaceListings)
+        .set({ priceUsdt: priceNum.toString() })
+        .where(eq(marketplaceListings.id, existing.id));
+    } else {
+      await db.insert(marketplaceListings).values({
+        fighterId: agentId,
+        sellerWallet: sellerWallet,
+        priceUsdt: priceNum.toString(),
+        status: "active",
+      });
+    }
+
+    res.json({ success: true });
   } catch (error) {
     handleError(res, error);
   }
@@ -1281,6 +1630,38 @@ router.post(
     try {
       const result = await syncBotaFighterProfilesFromLiveBattles(parseLimit(req.body?.limit, 40, 40));
       res.json(result);
+    } catch (error) {
+      handleError(res, error);
+    }
+  },
+);
+
+router.post(
+  "/admin/bnb/agents/:agentId/registration",
+  PrivyAuthMiddleware,
+  requireAdmin,
+  async (req: any, res) => {
+    try {
+      const agentId = String(req.params.agentId || "");
+      const profile = await getBotaFighterProfile(agentId, false);
+      if (!profile) {
+        return res.status(404).json({ message: "BOTA fighter profile not found" });
+      }
+      const parsed = botaBnbAgentRegistrationSchema.parse(req.body || {});
+      const identityPreview = buildBotaBnbAgentIdentityForProfile(profile, null);
+      const registration = await upsertBotaBnbAgentRegistration({
+        agentId: profile.agentId,
+        chainId: parsed.chainId,
+        registryAddress: parsed.registryAddress,
+        bnbAgentId: parsed.bnbAgentId,
+        metadataUri: parsed.metadataUri || identityPreview.metadataUri,
+        registrationTxHash: parsed.registrationTxHash,
+        status: parsed.status,
+        registeredBy: parsed.registeredBy || req.user?.walletAddress || req.user?.primaryWalletAddress || null,
+        metadata: parsed.metadata || {},
+      });
+      const identity = buildBotaBnbAgentIdentityForProfile(profile, registration);
+      res.json({ registration, identity });
     } catch (error) {
       handleError(res, error);
     }
@@ -3369,6 +3750,712 @@ router.post("/launcher/deploy", PrivyAuthMiddleware, async (req: any, res) => {
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
     const result = await deployBantahLaunchToken(req.body || {}, { userId });
     res.json(result);
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// ===== Phase 3 Gen-1 Economy endpoints =====
+
+const gen1ToolSchema = z.object({
+  toolId: z.string().trim().min(1).max(180),
+  seasonId: z.string().trim().min(1).max(80).optional().nullable(),
+  name: z.string().trim().min(1).max(180),
+  rarity: z.enum(["common", "rare", "epic"]),
+  description: z.string().trim().max(4000).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  supplyTotal: z.coerce.number().int().min(0).optional(),
+});
+
+router.post("/gen1/tools", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    if (!req.user?.isAdmin) return res.status(403).json({ message: "Admin-only action" });
+    const payload = gen1ToolSchema.parse(req.body || {});
+    const tool = await gen1Economy.upsertTool({
+      toolId: payload.toolId,
+      seasonId: payload.seasonId || null,
+      name: payload.name,
+      rarity: payload.rarity,
+      description: payload.description || null,
+      metadata: payload.metadata || {},
+      supplyTotal: payload.supplyTotal || 0,
+    });
+    res.json({ tool });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.get("/gen1/tools", async (req: any, res) => {
+  try {
+    const tools = await gen1Economy.getTools();
+    res.json({ tools });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/gen1/tools/:toolId", async (req: any, res) => {
+  try {
+    const toolId = String(req.params.toolId || "").trim();
+    if (!toolId) return res.status(400).json({ message: "missing toolId" });
+    const tool = await gen1Economy.getTool(toolId);
+    if (!tool) return res.status(404).json({ message: "tool not found" });
+    res.json({ tool });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/gen1/listings", async (req: any, res) => {
+  try {
+    const status = typeof req.query.status === "string" ? String(req.query.status || "").trim() : "open";
+    const listings = await gen1Economy.getListings(status || "open");
+    res.json({ listings });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+const listingCreateSchema = z.object({
+  listingId: z.string().trim().min(1).max(180),
+  toolId: z.string().trim().min(1).max(180),
+  quantity: z.coerce.number().int().min(1).default(1),
+  priceNative: z.string().trim().min(1),
+  tokenSymbol: z.string().trim().min(1).max(32).optional().default("BNB"),
+  expiresAt: z.string().optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+router.post("/gen1/listings", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    const payload = listingCreateSchema.parse(req.body || {});
+    // Check seller has sufficient inventory
+    const inv = await gen1Economy.getInventory(userId, payload.toolId);
+    const currentQty = inv ? Number(inv.quantity || 0) : 0;
+    if (currentQty < payload.quantity) {
+      return res.status(400).json({ message: `Insufficient inventory. Have ${currentQty}, need ${payload.quantity}` });
+    }
+    const listing = await gen1Economy.createListing({
+      listingId: payload.listingId,
+      sellerUserId: userId,
+      toolId: payload.toolId,
+      quantity: payload.quantity,
+      priceNative: payload.priceNative,
+      tokenSymbol: payload.tokenSymbol,
+      expiresAt: payload.expiresAt || null,
+      metadata: payload.metadata || {},
+    });
+    res.json({ listing });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.get("/gen1/listings/:listingId", async (req: any, res) => {
+  try {
+    const listingId = String(req.params.listingId || "").trim();
+    if (!listingId) return res.status(400).json({ message: "missing listingId" });
+    const listing = await gen1Economy.getListing(listingId);
+    if (!listing) return res.status(404).json({ message: "listing not found" });
+    res.json({ listing });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+const purchaseSchema = z.object({
+  listingId: z.string().trim().min(1).max(180),
+  paymentTxHash: z.string().trim().optional().nullable(),
+});
+
+router.post("/gen1/listings/:listingId/buy", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    const payload = purchaseSchema.parse({ listingId: req.params.listingId, ...(req.body || {}) });
+    const listing = await gen1Economy.getListing(payload.listingId);
+    if (!listing) return res.status(404).json({ message: "listing not found" });
+    // Perform atomic purchase flow (transactional) to prevent double-sells
+    const sale = await (gen1Economy as any).purchaseListing({ listingId: payload.listingId, buyerUserId: userId, paymentTxHash: payload.paymentTxHash || null });
+    res.json({ sale });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+const nativeToolPurchaseSchema = z.object({
+  purchaseId: z.string().trim().min(1).max(180),
+  quantity: z.coerce.number().int().min(1).default(1),
+  priceNative: z.string().trim().min(1),
+  tokenSymbol: z.string().trim().min(1).max(32).optional().default("BNB"),
+  paymentTxHash: z.string().trim().optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+router.post("/gen1/tools/:toolId/buy", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    const toolId = String(req.params.toolId || "").trim();
+    const payload = nativeToolPurchaseSchema.parse({ ...(req.body || {}), toolId: toolId });
+    const purchase = await (gen1Economy as any).purchaseToolWithNativeToken({
+      purchaseId: payload.purchaseId,
+      buyerUserId: userId,
+      toolId: toolId,
+      quantity: payload.quantity,
+      priceNative: payload.priceNative,
+      tokenSymbol: payload.tokenSymbol,
+      paymentTxHash: payload.paymentTxHash || null,
+      metadata: payload.metadata || {},
+    });
+    res.json({ purchase });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+const bcPurchaseSchema = z.object({
+  purchaseId: z.string().trim().min(1).max(180),
+  usdAmount: z.coerce.number().positive(),
+  paymentTxHash: z.string().trim().optional().nullable(),
+  tokenSymbol: z.string().trim().max(32).optional().default("USDT"),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+function calculateBcForUsd(usdAmount: number) {
+  const tiers = [
+    { amount: 100, bc: 1500000 },
+    { amount: 50, bc: 650000 },
+    { amount: 10, bc: 120000 },
+    { amount: 5, bc: 55000 },
+    { amount: 1, bc: 10000 },
+  ];
+  const exact = tiers.find((t) => Number(t.amount) === Number(usdAmount));
+  if (exact) {
+    const multiplier = exact.bc / (exact.amount * BC_MINT_RATE);
+    return { bc: exact.bc, multiplier };
+  }
+  // default to base rate
+  const bc = Math.floor(usdAmount * BC_MINT_RATE);
+  return { bc, multiplier: 1 };
+}
+
+router.post("/gen1/bc/purchase", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    const payload = bcPurchaseSchema.parse({ ...(req.body || {}) });
+
+    const { bc, multiplier } = calculateBcForUsd(Number(payload.usdAmount));
+
+    // mint and credit user
+    await economyEngine.mintBCFromFiat(userId, Number(payload.usdAmount), multiplier);
+
+    // return updated balance
+    const r = await db.execute(sql`SELECT points FROM "users" WHERE id = ${userId} LIMIT 1`);
+    const balance = (r as any).rows?.[0]?.points || 0;
+    res.json({ mintedBc: bc, balance });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.get("/gen1/inventory/:ownerUserId", async (req: any, res) => {
+  try {
+    const ownerUserId = String(req.params.ownerUserId || "").trim();
+    if (!ownerUserId) return res.status(400).json({ message: "missing ownerUserId" });
+    const inv = await gen1Economy.getInventory(ownerUserId);
+    res.json({ inventory: inv });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post("/gen1/inventory/adjust", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    if (!req.user?.isAdmin) return res.status(403).json({ message: "Admin-only action" });
+    const schema = z.object({ ownerUserId: z.string().min(1), toolId: z.string().min(1), delta: z.coerce.number().int() });
+    const p = schema.parse(req.body || {});
+    const newQty = await gen1Economy.adjustInventory(p.ownerUserId, p.toolId, p.delta);
+    res.json({ ownerUserId: p.ownerUserId, toolId: p.toolId, quantity: newQty });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.post("/gen1/listings/:listingId/cancel", PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    const listingId = String(req.params.listingId || "").trim();
+    if (!listingId) return res.status(400).json({ message: "missing listingId" });
+    const listing = await gen1Economy.getListing(listingId);
+    if (!listing) return res.status(404).json({ message: "listing not found" });
+    // Verify ownership (or admin override)
+    if (listing.seller_user_id !== userId && !req.user?.isAdmin) {
+      return res.status(403).json({ message: "Can only cancel own listings" });
+    }
+    // Only cancel if open
+    if (listing.status !== "open") return res.status(400).json({ message: `Cannot cancel listing with status ${listing.status}` });
+    const updated = await gen1Economy.updateListingStatus(listingId, "cancelled");
+    res.json({ listing: updated });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/gen1/listings/:listingId/reserve', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const listingId = String(req.params.listingId || '').trim();
+    if (!listingId) return res.status(400).json({ message: 'missing listingId' });
+    const ttlSeconds = Number(req.body?.ttlSeconds || 300);
+    const reservation = await (gen1Economy as any).reserveListing({ listingId, reserverUserId: userId, ttlSeconds });
+    res.json({ reservation });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/gen1/listings/:listingId/unreserve', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || "").trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const listingId = String(req.params.listingId || '').trim();
+    if (!listingId) return res.status(400).json({ message: 'missing listingId' });
+    const force = Boolean(req.user?.isAdmin);
+    const reservation = await (gen1Economy as any).cancelReservation({ listingId, requesterUserId: userId, force });
+    res.json({ reservation });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get("/gen1/listings/user/:userId", async (req: any, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    if (!userId) return res.status(400).json({ message: "missing userId" });
+    const listings = await gen1Economy.getListingsByOwner(userId);
+    res.json({ listings });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Packs: catalog, buy, open
+router.get('/gen1/packs', async (req: any, res) => {
+  try {
+    const packs = await packService.getPackCatalog();
+    res.json({ packs });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+const buyBcSchema = z.object({
+  txHash: z.string().startsWith('0x'),
+  chainId: z.number(),
+  usdAmount: z.number().min(1),
+  tokenSymbol: z.string()
+});
+
+const BC_TIERS = {
+  1: 10000,
+  2: 21000,
+  3: 32000,
+  5: 55000,
+  8: 90000,
+  10: 120000,
+  15: 185000,
+  20: 250000,
+  25: 320000,
+  30: 390000,
+  50: 650000,
+  100: 1500000,
+};
+
+// Add BC via on-chain payment
+router.post('/gen1/buy-bc', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = buyBcSchema.parse(req.body || {});
+
+    // For testnet, assume 0.002 BNB per $1 (roughly testing purposes)
+    const weiPerUsd = 2000000000000000n; // 0.002 BNB
+    const expectedWei = (weiPerUsd * BigInt(payload.usdAmount)).toString();
+
+    const verifyResult = await onchainPaymentService.verifyPayment(
+      payload.txHash as `0x${string}`,
+      expectedWei,
+      payload.chainId
+    );
+
+    if (!verifyResult.success) {
+      return res.status(400).json({ message: 'Payment verification failed' });
+    }
+
+    const bcAmount = BC_TIERS[payload.usdAmount as keyof typeof BC_TIERS] || (payload.usdAmount * 10000);
+    
+    const db = require('../db').db;
+    const { sql } = require('drizzle-orm');
+    
+    // Add points to user
+    await db.execute(sql`
+      UPDATE "users" 
+      SET "points" = COALESCE("points", 0) + ${bcAmount}
+      WHERE "id" = ${userId};
+    `);
+
+    // Record the transaction
+    await db.execute(sql`
+      INSERT INTO "bantcredit_transactions" ("user_id", "amount", "transaction_type", "reference_id", "metadata")
+      VALUES (${userId}, ${bcAmount}, 'purchase', ${payload.txHash}, ${JSON.stringify({ usdAmount: payload.usdAmount, token: payload.tokenSymbol })}::jsonb);
+    `);
+
+    res.json({ success: true, addedBc: bcAmount });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+const packBuySchema = z.object({ 
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+
+router.post('/gen1/packs/:packId/buy', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const packId = String(req.params.packId || '').trim();
+    if (!packId) return res.status(400).json({ message: 'missing packId' });
+    const payload = packBuySchema.parse(req.body || {});
+
+    const packs = await packService.getPackCatalog();
+    const pack = packs.find(p => p.pack_id === packId);
+    if (!pack) return res.status(404).json({ message: 'Pack not found' });
+
+    const packPriceBc = Number(pack.price_bc || pack.metadata?.priceBc || 20000);
+
+    const db = require('../db').db;
+    const { sql } = require('drizzle-orm');
+
+    // Deduct BC
+    const balanceUpdate = await db.execute(sql`
+      UPDATE "users"
+      SET "points" = COALESCE("points", 0) - ${packPriceBc}
+      WHERE "id" = ${userId} AND COALESCE("points", 0) >= ${packPriceBc}
+      RETURNING "points";
+    `);
+
+    // We reuse the rowsFromResult helper conceptually
+    const balanceRows = Array.isArray(balanceUpdate) ? balanceUpdate : (balanceUpdate && (balanceUpdate as any).rows ? (balanceUpdate as any).rows : []);
+    
+    if (!balanceRows.length) {
+      return res.status(400).json({ message: `Insufficient BantCredit. Need ${packPriceBc} BC.` });
+    }
+
+    const updatedMetadata = { ...payload.metadata, purchaseMethod: 'bc', pricePaidBc: packPriceBc };
+    const result = await packService.buyPack(packId, userId, { metadata: updatedMetadata });
+    res.json({ packInstance: result });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+const packOpenSchema = z.object({ mode: z.enum(['manual','autonomous']).optional().default('manual'), agentMetrics: z.record(z.string(), z.unknown()).optional(), autoEquip: z.boolean().optional() });
+router.post('/gen1/packs/:packInstanceId/open', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const packInstanceId = String(req.params.packInstanceId || '').trim();
+    if (!packInstanceId) return res.status(400).json({ message: 'missing packInstanceId' });
+    const payload = packOpenSchema.parse(req.body || {});
+    const result = await packService.openPack(packInstanceId, userId, { mode: payload.mode as any, agentMetrics: payload.agentMetrics as any, autoEquip: payload.autoEquip });
+    res.json({ result });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.get('/gen1/tools', async (req, res) => {
+  try {
+    const tools = await gen1Economy.getTools();
+    res.json({ tools });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get('/gen1/listings', async (req, res) => {
+  try {
+    const status = String(req.query.status || '');
+    const listings = await gen1Economy.getListings(status || undefined);
+    res.json({ listings });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get('/gen1/inventory/:ownerUserId', async (req, res) => {
+  try {
+    const ownerUserId = String(req.params.ownerUserId || '').trim();
+    if (!ownerUserId) return res.status(400).json({ message: 'missing ownerUserId' });
+    const inventory = await gen1Economy.getInventory(ownerUserId);
+    res.json({ inventory });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+const gen1ListingSchema = z.object({
+  listingId: z.string().min(1),
+  toolId: z.string().min(1),
+  quantity: z.number().int().min(1).default(1),
+  priceNative: z.string(),
+  tokenSymbol: z.string().optional().default('BNB'),
+  expiresAt: z.string().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+
+router.post('/gen1/listings', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const sellerUserId = String(req.user?.id || '').trim();
+    if (!sellerUserId) return res.status(401).json({ message: 'Unauthorized' });
+    const payload = gen1ListingSchema.parse(req.body || {});
+    const listing = await gen1Economy.createListing({
+      sellerUserId,
+      ...payload
+    });
+    res.json({ listing });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.post('/gen1/listings/:listingId/buy', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const buyerUserId = String(req.user?.id || '').trim();
+    if (!buyerUserId) return res.status(401).json({ message: 'Unauthorized' });
+    const listingId = String(req.params.listingId || '').trim();
+    if (!listingId) return res.status(400).json({ message: 'missing listingId' });
+    const payload = req.body || {};
+    const sale = await gen1Economy.purchaseListing({
+      listingId,
+      buyerUserId,
+      paymentTxHash: payload.paymentTxHash
+    });
+    res.json({ sale });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/gen1/tools/:toolId/buy', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const buyerUserId = String(req.user?.id || '').trim();
+    if (!buyerUserId) return res.status(401).json({ message: 'Unauthorized' });
+    const toolId = String(req.params.toolId || '').trim();
+    if (!toolId) return res.status(400).json({ message: 'missing toolId' });
+    const payload = req.body || {};
+    if (payload.tokenSymbol && payload.tokenSymbol !== 'BC') {
+        const purchase = await gen1Economy.purchaseToolWithNativeToken({
+            purchaseId: payload.purchaseId || `buy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            buyerUserId,
+            toolId,
+            quantity: payload.quantity || 1,
+            priceNative: payload.priceNative || "0",
+            tokenSymbol: payload.tokenSymbol,
+            paymentTxHash: payload.paymentTxHash,
+            metadata: payload.metadata
+        });
+        res.json({ purchase });
+    } else {
+        const result = await gen1Economy.purchaseToolWithBantCredit({
+            purchaseId: payload.purchaseId || `buy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            buyerUserId,
+            toolId,
+            quantity: payload.quantity || 1,
+            metadata: payload.metadata
+        });
+        res.json({ purchase: result.purchase, balance: result.balance });
+    }
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get('/gen1/packs/inventory/:walletAddress', async (req: any, res) => {
+  try {
+    const walletAddress = String(req.params.walletAddress || '').trim();
+    if (!walletAddress) return res.status(400).json({ message: 'missing walletAddress' });
+    
+    await packService.ensurePackTables();
+    // Query unopened packs for user
+    const db = require('../db').db;
+    const { sql } = require('drizzle-orm');
+    
+    // Get the pack definitions joined with the ownership records
+    const r = await db.execute(sql`
+      SELECT 
+        o.pack_instance_id, o.pack_id, o.status, o.created_at,
+        c.display_name, c.type, c.metadata as catalog_metadata
+      FROM "pack_ownership" o
+      JOIN "pack_catalog" c ON o.pack_id = c.pack_id
+      WHERE o.owner_user_id = ${walletAddress} AND o.status = 'unopened'
+      ORDER BY o.created_at DESC
+    `);
+    
+    // We reuse the rowsFromResult helper implicitly here
+    const rows = Array.isArray(r) ? r : (r && typeof r === 'object' && Array.isArray((r as any).rows) ? (r as any).rows : []);
+    
+    res.json({ unopenedPacks: rows });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.get('/gen1/packs/history/:walletAddress', async (req: any, res) => {
+  try {
+    const walletAddress = String(req.params.walletAddress || '').trim();
+    if (!walletAddress) return res.status(400).json({ message: 'missing walletAddress' });
+    
+    await packService.ensurePackTables();
+    const db = require('../db').db;
+    const { sql } = require('drizzle-orm');
+    
+    const r = await db.execute(sql`
+      SELECT 
+        e.event_id, e.pack_instance_id, e.agent_id, e.result, e.created_at,
+        e.tool_catalog_id, e.tool_role, e.tool_tier, e.compatible_trait,
+        c.display_name as pack_name, c.type as pack_type
+      FROM "pack_open_events" e
+      JOIN "pack_ownership" o ON e.pack_instance_id = o.pack_instance_id
+      JOIN "pack_catalog" c ON o.pack_id = c.pack_id
+      WHERE o.owner_user_id = ${walletAddress}
+      ORDER BY e.created_at DESC
+      LIMIT 50
+    `);
+    
+    const rows = Array.isArray(r) ? r : (r && typeof r === 'object' && Array.isArray((r as any).rows) ? (r as any).rows : []);
+    
+    res.json({ history: rows });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+
+// Agent decision endpoint (runs decision engine on provided metrics)
+const decisionSchema = z.object({ metrics: z.record(z.string(), z.unknown()) });
+router.post('/agents/:agentId/pack-decision', async (req: any, res) => {
+  try {
+    const agentId = String(req.params.agentId || '').trim();
+    if (!agentId) return res.status(400).json({ message: 'missing agentId' });
+    const payload = decisionSchema.parse(req.body || {});
+    const metrics = payload.metrics as any;
+    // attach agentId if not present
+    if (!metrics.agentId) metrics.agentId = agentId;
+    const decision = decidePackOpen(metrics as any);
+    res.json({ decision });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+// Admin endpoints to manage pack drop tables
+const packDropSchema = z.object({ packType: z.string(), toolId: z.string(), weight: z.number().int().nonnegative().default(100), name: z.string().optional(), rarity: z.string().optional(), metadata: z.record(z.string(), z.unknown()).optional() });
+router.get('/admin/gen1/pack-drops', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const user = req.user || {};
+    if (!user.isAdmin) return res.status(403).json({ message: 'forbidden' });
+    const packType = String(req.query.packType || '').trim();
+    let rows: any[] = []
+    if (packType) {
+      const r = await db.execute(sql`SELECT * FROM "pack_drops" WHERE "pack_type" = ${packType} ORDER BY id ASC;`)
+      rows = Array.isArray(r) ? r : (r && (r as any).rows ? (r as any).rows : [])
+    } else {
+      const r = await db.execute(sql`SELECT * FROM "pack_drops" ORDER BY pack_type ASC, id ASC;`)
+      rows = Array.isArray(r) ? r : (r && (r as any).rows ? (r as any).rows : [])
+    }
+    res.json({ drops: rows });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+router.post('/admin/gen1/pack-drops', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const user = req.user || {};
+    if (!user.isAdmin) return res.status(403).json({ message: 'forbidden' });
+    const payload = packDropSchema.parse(req.body || {});
+    const r = await db.execute(sql`
+      INSERT INTO "pack_drops" (pack_type, tool_id, weight, name, rarity, metadata)
+      VALUES (${payload.packType}, ${payload.toolId}, ${payload.weight}, ${payload.name || null}, ${payload.rarity || null}, ${JSON.stringify(payload.metadata || {})}::jsonb)
+      RETURNING *;
+    `)
+    const rows = Array.isArray(r) ? r : (r && (r as any).rows ? (r as any).rows : [])
+    res.json({ created: rows[0] || null });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.delete('/admin/gen1/pack-drops/:id', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const user = req.user || {};
+    if (!user.isAdmin) return res.status(403).json({ message: 'forbidden' });
+    const id = Number(req.params.id || 0);
+    if (!id) return res.status(400).json({ message: 'missing id' });
+    await db.execute(sql`DELETE FROM "pack_drops" WHERE id = ${id};`)
+    res.json({ ok: true });
+  } catch (error) {
+    handleError(res, error);
+  }
+});
+
+// Agent memory endpoints
+const memoryAppendSchema = z.object({ id: z.string().min(1), kind: z.string().min(1), payload: z.record(z.string(), z.unknown()).optional(), score: z.number().optional() });
+router.post('/agents/:agentId/memory', PrivyAuthMiddleware, async (req: any, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    const agentId = String(req.params.agentId || '').trim();
+    const payload = memoryAppendSchema.parse(req.body || {});
+    const entry = await agentMemoryService.appendAgentMemory({ id: payload.id, agentId, kind: payload.kind, payload: payload.payload || {}, score: payload.score });
+    res.json({ entry });
+  } catch (error) {
+    if (error instanceof ZodError) return res.status(400).json({ issue: error.errors });
+    handleError(res, error);
+  }
+});
+
+router.get('/agents/:agentId/memory/summary', async (req: any, res) => {
+  try {
+    const agentId = String(req.params.agentId || '').trim();
+    if (!agentId) return res.status(400).json({ message: 'missing agentId' });
+    const summary = await agentMemoryService.getAgentMemorySummary(agentId);
+    res.json({ summary });
   } catch (error) {
     handleError(res, error);
   }

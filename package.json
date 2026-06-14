@@ -123,7 +123,7 @@
     "dayjs": "^1.11.13",
     "decimal.js": "^10.6.0",
     "dotenv": "^17.2.0",
-    "drizzle-orm": "^0.39.1",
+    "drizzle-orm": "^0.44.7",
     "drizzle-zod": "^0.7.0",
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",

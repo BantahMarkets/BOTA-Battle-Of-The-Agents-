@@ -72,7 +72,22 @@ type EnsPreviewResponse = {
     avatarUrl: string | null
     textRecords: Record<string, string | null>
   }
+  ensAgentIdentity?: EnsAgentIdentity
   updatedAt: string
+}
+
+type EnsAgentIdentity = {
+  status: string
+  ensName: string
+  subname?: {
+    suggestedName?: string | null
+    configured?: boolean
+  }
+  registry?: {
+    verificationKey?: string | null
+    verified?: boolean
+  }
+  textRecords?: Record<string, string>
 }
 
 type ProfileBattleRow = {
@@ -223,6 +238,20 @@ function characterAvatarForAsset(asset: WalletFighterAsset) {
 
 function derivativeForAsset(asset: WalletFighterAsset | null) {
   return asset ? getBotaDerivativeFighter(asset.fighter.metadata) : null
+}
+
+function ensAgentIdentityForAsset(asset: WalletFighterAsset | null): EnsAgentIdentity | null {
+  const identity = asset?.fighter.metadata?.ensAgentIdentity
+  if (!identity || typeof identity !== 'object' || Array.isArray(identity)) return null
+  return identity as EnsAgentIdentity
+}
+
+function ensIdentityStatusLabel(status: string) {
+  if (status === 'published') return 'Published'
+  if (status === 'ready_to_publish') return 'Ready'
+  if (status === 'ensip26_ready') return 'ENSIP-26 ready'
+  if (status === 'needs_registry') return 'Needs registry'
+  return status || 'Ready'
 }
 
 export default function ImportPage() {
@@ -381,6 +410,7 @@ export default function ImportPage() {
     : importMutation.isPending
       ? 'Importing'
       : 'Import as Fighter'
+  const selectedEnsAgentIdentity = ensAgentIdentityForAsset(selectedAsset)
 
   return (
     <div className="flex-1 overflow-hidden rounded border border-border bg-card">
@@ -589,7 +619,7 @@ export default function ImportPage() {
                       <div className="mt-2 grid grid-cols-3 gap-1">
                         {Object.entries(derivativeForAsset(selectedAsset)?.stats || {}).slice(0, 6).map(([key, value]) => (
                           <div key={key} className="rounded bg-background px-1.5 py-1">
-                            <div className="font-black text-foreground">{value}</div>
+                            <div className="font-black text-foreground">{String(value)}</div>
                             <div className="uppercase text-muted-foreground">{key}</div>
                           </div>
                         ))}
@@ -625,6 +655,39 @@ export default function ImportPage() {
                       <div className="font-black text-foreground">#{selectedAsset.fighter.rank || '-'}</div>
                     </div>
                   </div>
+
+                  {selectedEnsAgentIdentity ? (
+                    <div className="mt-2 rounded border border-primary/25 bg-primary/10 p-2 text-[11px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-black text-primary">ENS Agent Identity</div>
+                        <span className="rounded bg-background px-1.5 py-0.5 font-black uppercase text-muted-foreground">
+                          {ensIdentityStatusLabel(selectedEnsAgentIdentity.status)}
+                        </span>
+                      </div>
+                      <div className="mt-1 grid gap-1">
+                        <div className="flex min-w-0 items-center justify-between gap-2 rounded bg-background px-2 py-1">
+                          <span className="shrink-0 text-muted-foreground">ENSIP-26</span>
+                          <span className="truncate font-black text-foreground">agent-context</span>
+                        </div>
+                        {selectedEnsAgentIdentity.registry?.verificationKey ? (
+                          <div className="flex min-w-0 items-center justify-between gap-2 rounded bg-background px-2 py-1">
+                            <span className="shrink-0 text-muted-foreground">ENSIP-25</span>
+                            <span className="truncate font-black text-foreground" title={selectedEnsAgentIdentity.registry.verificationKey}>
+                              {selectedEnsAgentIdentity.registry.verified ? 'verified' : 'verification key ready'}
+                            </span>
+                          </div>
+                        ) : null}
+                        {selectedEnsAgentIdentity.subname?.suggestedName ? (
+                          <div className="flex min-w-0 items-center justify-between gap-2 rounded bg-background px-2 py-1">
+                            <span className="shrink-0 text-muted-foreground">Subname</span>
+                            <span className="truncate font-black text-foreground">
+                              {selectedEnsAgentIdentity.subname.suggestedName}
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="mt-2 flex flex-wrap gap-1">
                     <span

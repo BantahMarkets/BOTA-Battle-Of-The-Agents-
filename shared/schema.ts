@@ -422,6 +422,7 @@ export const botaFighterProfiles = pgTable(
     titles: jsonb("titles").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     lastBattleId: varchar("last_battle_id", { length: 255 }),
+    combatProfileId: text("combat_profile_id"),
     metadata: jsonb("metadata")
       .$type<Record<string, unknown>>()
       .notNull()
@@ -436,6 +437,75 @@ export const botaFighterProfiles = pgTable(
     rankIdx: index("idx_bota_fighter_profiles_rank").on(table.rank),
     fameIdx: index("idx_bota_fighter_profiles_fame_score").on(table.fameScore),
     lastSeenIdx: index("idx_bota_fighter_profiles_last_seen_at").on(table.lastSeenAt),
+  }),
+);
+
+// Gen1 economy: tools, inventories, installs, and listings
+export const gen1Tools = pgTable("gen1_tools", {
+  toolId: uuid("tool_id").defaultRandom().primaryKey().notNull(),
+  toolKey: varchar("tool_key", { length: 128 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  rarity: varchar("rarity", { length: 32 }).notNull(),
+  season: integer("season").notNull().default(1),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`),
+  totalSupply: integer("total_supply").default(0),
+  mintable: boolean("mintable").notNull().default(true),
+  price: decimal("price", { precision: 30, scale: 8 }),
+  currency: varchar("currency", { length: 16 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const gen1Inventories = pgTable(
+  "gen1_inventories",
+  {
+    id: serial("id").primaryKey(),
+    ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "cascade" }),
+    toolId: uuid("tool_id").references(() => gen1Tools.toolId, { onDelete: "cascade" }),
+    quantity: integer("quantity").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    ownerIdx: index("idx_gen1_inventories_owner_user_id").on(table.ownerUserId),
+  }),
+);
+
+export const gen1ToolInstalls = pgTable(
+  "gen1_tool_installs",
+  {
+    id: serial("id").primaryKey(),
+    fighterAgentId: varchar("fighter_agent_id", { length: 180 }).references(() => botaFighterProfiles.agentId, { onDelete: "cascade" }),
+    ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+    toolId: uuid("tool_id").references(() => gen1Tools.toolId, { onDelete: "set null" }),
+    season: integer("season").notNull().default(1),
+    installedAt: timestamp("installed_at").defaultNow(),
+    removedAt: timestamp("removed_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    fighterIdx: index("idx_gen1_tool_installs_fighter_agent_id").on(table.fighterAgentId),
+  }),
+);
+
+export const gen1Listings = pgTable(
+  "gen1_listings",
+  {
+    listingId: uuid("listing_id").defaultRandom().primaryKey().notNull(),
+    sellerUserId: varchar("seller_user_id").references(() => users.id, { onDelete: "set null" }),
+    fighterAgentId: varchar("fighter_agent_id", { length: 180 }).references(() => botaFighterProfiles.agentId, { onDelete: "set null" }),
+    toolId: uuid("tool_id").references(() => gen1Tools.toolId, { onDelete: "set null" }),
+    price: decimal("price", { precision: 30, scale: 8 }).notNull(),
+    currency: varchar("currency", { length: 16 }).notNull().default("BC"),
+    status: varchar("status", { length: 24 }).notNull().default("open"),
+    reservedBy: varchar("reserved_by", { length: 255 }),
+    reservedUntil: timestamp("reserved_until"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    statusIdx: index("idx_gen1_listings_status").on(table.status),
   }),
 );
 
@@ -1537,3 +1607,136 @@ export const insertUserPreferencesSchema = createInsertSchema(userPreferences).o
   id: true,
   updatedAt: true,
 });
+
+// --- BOTA V2 AGENT BRAIN & LOADOUT TABLES ---
+
+export const botaToolsCatalog = pgTable("bota_tools_catalog", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  tier: text("tier").notNull(), // common, rare, epic
+  role: text("role").notNull(), // primary, secondary, passive
+  compatibleTrait: text("compatible_trait").notNull(), // aggression, defense, intelligence, speed, luck
+  triggerConditionDesc: text("trigger_condition_desc"),
+  triggerConditionJson: jsonb("trigger_condition_json"),
+  effectDesc: text("effect_desc").notNull(),
+  effectJson: jsonb("effect_json").notNull(),
+  cooldownRounds: integer("cooldown_rounds").default(0),
+  soulDrainEnabled: boolean("soul_drain_enabled").default(false),
+  oncePerBattle: boolean("once_per_battle").default(false),
+  powerRating: integer("power_rating").notNull(),
+});
+
+export const botaToolInventory = pgTable("bota_tool_inventory", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  toolCatalogId: text("tool_catalog_id").notNull().references(() => botaToolsCatalog.id),
+  ownerWallet: text("owner_wallet").notNull(),
+  acquiredFrom: text("acquired_from"), // pack_open, marketplace, transfer
+  acquiredAt: timestamp("acquired_at").defaultNow(),
+  equippedToFighterId: text("equipped_to_fighter_id"),
+  equippedAt: timestamp("equipped_at"),
+});
+
+export const botaFighterLoadout = pgTable("bota_fighter_loadout", {
+  fighterId: text("fighter_id").primaryKey(),
+  ownerWallet: text("owner_wallet").notNull(),
+  primaryToolId: uuid("primary_tool_id").references(() => botaToolInventory.id),
+  secondaryToolId: uuid("secondary_tool_id").references(() => botaToolInventory.id),
+  passiveToolId: uuid("passive_tool_id").references(() => botaToolInventory.id),
+  effectiveTier: text("effective_tier").notNull().default("none"),
+  soulDrainActive: boolean("soul_drain_active").default(false),
+  lastUpdated: timestamp("last_updated").defaultNow(),
+});
+
+export const botaFighterCombatProfiles = pgTable("bota_fighter_combat_profiles", {
+  fighterId: text("fighter_id").primaryKey(),
+  source: text("source").notNull(), // ENS, ERC20, NFT, AGENT, manual
+  aggression: integer("aggression").notNull(),
+  defense: integer("defense").notNull(),
+  intelligence: integer("intelligence").notNull(),
+  speed: integer("speed").notNull(),
+  luck: integer("luck").notNull(),
+  hp: integer("hp").notNull(),
+  generationBonus: integer("generation_bonus").default(0),
+  profileGeneratedAt: timestamp("profile_generated_at").defaultNow(),
+  profileVersion: integer("profile_version").default(1),
+});
+
+export const botaBattleRoundLog = pgTable("bota_battle_round_log", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  battleId: uuid("battle_id").notNull(), // Using uuid, but if engine uses string we might need text("battle_id") - assume string is safer if battles are string id
+  roundNumber: integer("round_number").notNull(),
+  fighterId: text("fighter_id").notNull(),
+  actionTaken: text("action_taken").notNull(),
+  toolUsedId: text("tool_used_id"),
+  damageDealt: integer("damage_dealt"),
+  hpAfter: integer("hp_after"),
+  winProbabilityBefore: decimal("win_probability_before", { precision: 5, scale: 2 }),
+  rngSeed: text("rng_seed"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const bantcreditBalances = pgTable("bantcredit_balances", {
+  walletAddress: text("wallet_address").primaryKey(),
+  balance: decimal("balance", { precision: 20, scale: 8 }).notNull().default("0"),
+  lastUpdated: timestamp("last_updated").defaultNow(),
+});
+
+export const bantcreditLedger = pgTable("bantcredit_ledger", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  walletAddress: text("wallet_address").notNull(),
+  amount: decimal("amount", { precision: 20, scale: 8 }).notNull(),
+  transactionType: text("transaction_type").notNull(),
+  referenceId: text("reference_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const bantcreditPot = pgTable("bantcredit_pot", {
+  id: serial("id").primaryKey(),
+  usdtReserve: decimal("usdt_reserve", { precision: 20, scale: 8 }).notNull().default("0"),
+  bcCirculation: decimal("bc_circulation", { precision: 20, scale: 8 }).notNull().default("0"),
+  currentRate: decimal("current_rate", { precision: 20, scale: 8 }).notNull().default("1"),
+  lastUpdated: timestamp("last_updated").defaultNow(),
+});
+
+export const soulDrainCooldowns = pgTable("soul_drain_cooldowns", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  winnerWallet: text("winner_wallet").notNull(),
+  loserWallet: text("loser_wallet").notNull(),
+  drainedAt: timestamp("drained_at").defaultNow(),
+});
+
+export const marketplaceListings = pgTable("marketplace_listings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  sellerWallet: text("seller_wallet").notNull(),
+  fighterId: text("fighter_id").notNull(),
+  priceUsdt: decimal("price_usdt", { precision: 20, scale: 8 }).notNull(),
+  status: text("status").notNull().default("active"),
+  listedAt: timestamp("listed_at").defaultNow(),
+});
+
+export const matchmakingQueue = pgTable("matchmaking_queue", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  fighterId: text("fighter_id").notNull(),
+  walletAddress: text("wallet_address").notNull(),
+  tier: text("tier").notNull(),
+  status: text("status").notNull().default("queued"),
+  enteredAt: timestamp("entered_at").defaultNow(),
+});
+
+export type BotaToolCatalog = typeof botaToolsCatalog.$inferSelect;
+export type InsertBotaToolCatalog = typeof botaToolsCatalog.$inferInsert;
+
+export type BotaToolInventory = typeof botaToolInventory.$inferSelect;
+export type InsertBotaToolInventory = typeof botaToolInventory.$inferInsert;
+
+export type BotaFighterLoadout = typeof botaFighterLoadout.$inferSelect;
+export type InsertBotaFighterLoadout = typeof botaFighterLoadout.$inferInsert;
+
+export type BotaFighterCombatProfile = typeof botaFighterCombatProfiles.$inferSelect;
+export type InsertBotaFighterCombatProfile = typeof botaFighterCombatProfiles.$inferInsert;
+
+export type BantcreditBalance = typeof bantcreditBalances.$inferSelect;
+export type InsertBantcreditBalance = typeof bantcreditBalances.$inferInsert;
+
+export type BantcreditLedger = typeof bantcreditLedger.$inferSelect;
+export type InsertBantcreditLedger = typeof bantcreditLedger.$inferInsert;

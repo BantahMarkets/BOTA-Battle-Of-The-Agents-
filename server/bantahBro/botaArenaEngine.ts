@@ -18,6 +18,10 @@ import type {
   BantahBroAgentBattle,
   BantahBroAgentBattleSide,
 } from "./agentBattleService";
+import { db } from "../db";
+import { eq, inArray } from "drizzle-orm";
+import { botaFighterCombatProfiles, botaFighterLoadout, botaToolInventory, botaToolsCatalog, botaBattleRoundLog } from "@shared/schema";
+import { botaEconomyService } from "./botaEconomyService";
 
 export const BOTA_ARENA_ENGINE_VERSION = "phase-2.0";
 
@@ -381,5 +385,88 @@ export async function simulateBotaArenaBattleFromLiveBattle(
   options: SimulationOptions = {},
 ) {
   const initialState = buildInitialBotaArenaStateFromBattle(battle, options);
-  return simulateBotaArenaBattle(initialState, options);
+
+  // Fetch V2 Combat Profiles and Tools
+  for (const fighter of initialState.fighters) {
+    const profile = await db.query.botaFighterCombatProfiles.findFirst({
+      where: eq(botaFighterCombatProfiles.fighterId, fighter.id)
+    });
+    
+    if (profile) {
+      fighter.combatProfile = profile;
+      // Merge V2 stats into legacy stats for engine compatibility
+      fighter.maxHealth = profile.hp;
+      fighter.health = profile.hp;
+      fighter.attack = profile.aggression;
+      fighter.defense = profile.defense;
+      fighter.speed = profile.speed;
+      fighter.accuracy = clamp(0.5 + profile.intelligence / 200, 0.5, 0.95);
+      fighter.critChance = clamp(profile.luck / 200, 0.05, 0.35);
+    }
+    
+    const loadout = await db.query.botaFighterLoadout.findFirst({
+      where: eq(botaFighterLoadout.fighterId, fighter.id)
+    });
+    
+    if (loadout) {
+      const toolIds = [loadout.primaryToolId, loadout.secondaryToolId, loadout.passiveToolId].filter(Boolean) as string[];
+      if (toolIds.length > 0) {
+        const inventory = await db.query.botaToolInventory.findMany({
+          where: inArray(botaToolInventory.id, toolIds)
+        });
+        const catalogIds = inventory.map((i: any) => i.toolCatalogId);
+        if (catalogIds.length > 0) {
+          const catalogs = await db.query.botaToolsCatalog.findMany({
+            where: inArray(botaToolsCatalog.id, catalogIds)
+          });
+          fighter.tools = catalogs.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            tier: c.tier,
+            role: c.role,
+            powerRating: c.powerRating,
+            effectDesc: c.effectDesc,
+            soulDrainEnabled: c.soulDrainEnabled || false
+          }));
+        }
+      }
+    }
+  }
+
+  const simulation = await simulateBotaArenaBattle(initialState, options);
+
+  // Save logs to bota_battle_round_log
+  const logInserts = simulation.finalState.log.map(event => ({
+    battleId: simulation.finalState.battleId,
+    roundNumber: event.round,
+    fighterId: event.actorId,
+    actionTaken: event.actionType,
+    toolUsedId: null, // Simplified for now
+    damageDealt: event.damage,
+    hpAfter: event.targetHealthAfter,
+    winProbabilityBefore: "0.50",
+    rngSeed: simulation.finalState.seed,
+  }));
+  
+  if (logInserts.length > 0) {
+    await db.insert(botaBattleRoundLog).values(logInserts);
+  }
+
+  // Soul Drain Logic
+  if (simulation.finalState.winnerId) {
+    const winner = simulation.finalState.fighters.find(f => f.id === simulation.finalState.winnerId);
+    const loser = simulation.finalState.fighters.find(f => f.id !== simulation.finalState.winnerId);
+    
+    if (winner && loser && winner.tools.some(t => t.soulDrainEnabled || t.tier === "epic")) {
+      try {
+        const amountToDrain = 10;
+        await botaEconomyService.burn(loser.id, amountToDrain * 0.2, "soul_drain_burn");
+        await botaEconomyService.transfer(loser.id, winner.id, amountToDrain * 0.8, "soul_drain_win");
+      } catch (e) {
+        // Ignored if insufficient funds or not registered with bantcredit
+      }
+    }
+  }
+
+  return simulation;
 }

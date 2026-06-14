@@ -601,7 +601,12 @@ function ArenaResultCard({
         <span className="rounded bg-primary/10 px-2 py-1 text-[10px] font-black uppercase text-primary">
           Ended Battle
         </span>
-        <span className="text-[10px] font-bold text-muted-foreground">
+        {record.metadata && (record.metadata as any).soulDrainAmount && (
+          <span className="rounded bg-purple-500/10 px-2 py-1 text-[10px] font-black uppercase text-purple-500 flex items-center gap-1">
+            Soul Drain <span className="font-bold">{(record.metadata as any).soulDrainAmount} BC</span>
+          </span>
+        )}
+        <span className="text-[10px] font-bold text-muted-foreground ml-auto">
           {resolvedAt ? new Date(resolvedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Recorded'}
         </span>
       </div>
@@ -619,6 +624,28 @@ function ArenaResultCard({
         <MiniMetric label="Spectators" value={formatCompactNumber(record.spectators)} compact />
         <MiniMetric label="Rail" value={record.provider.replace(/-/g, ' ')} compact />
       </div>
+      
+      {/* V2 Battle Logs Indicator */}
+      {record.metadata && (record.metadata as any).toolsFired && (record.metadata as any).toolsFired.length > 0 && (
+        <div className="mt-3 rounded border border-border bg-background p-2">
+          <div className="text-[9px] font-black uppercase text-muted-foreground mb-1 flex items-center justify-between">
+            <span>Combat Tools Fired</span>
+            <span className="text-primary">V2 Mechanics</span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {(record.metadata as any).toolsFired.slice(0, 3).map((tool: any, idx: number) => (
+              <span key={idx} className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-bold text-foreground">
+                {tool.name || tool}
+              </span>
+            ))}
+            {(record.metadata as any).toolsFired.length > 3 && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground">
+                +{(record.metadata as any).toolsFired.length - 3} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       <button
         type="button"
         onClick={() => {

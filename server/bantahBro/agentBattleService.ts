@@ -16,6 +16,8 @@ import {
 import { getPublicEnsFighterProfiles } from "./ensPublicFighterService";
 import { hydrateAgentBattleFeedLiveStats } from "./botaLiveStatsService";
 import { getExternalAgentCatalogProfiles } from "./externalAgentCatalogService";
+import { listBotaAgentChallenges, type BotaAgentChallenge } from "./botaAgentChallengeService";
+import { getFighterToolLoadoutMap } from "./gen1EconomyService";
 
 const AGENT_BATTLE_CACHE_TTL_MS = 5_000;
 const IMPORTED_BATTLE_PROFILE_CACHE_TTL_MS = Math.max(
@@ -188,9 +190,10 @@ export interface BantahBroAgentBattleSide {
   confidence: number;
   leaderboardRank?: number;
   rank?: number;
-  bantCreditsEarned?: number;
-  liveSpectators?: number;
+  bantCreditsEarned?: number | null;
+  liveSpectators?: number | null;
   status: "attacking" | "defending" | "staggered" | "holding";
+  loadoutTools?: { id: string; name: string; imageUrl: string; type: string }[];
 }
 
 export interface BantahBroAgentBattleEvent {
@@ -219,6 +222,8 @@ export interface BantahBroAgentBattle {
   rewardClaimBantCredits?: number;
   bantCreditsEarned?: number;
   liveStatsUpdatedAt?: string;
+  isChallenge?: boolean;
+  challengeCode?: string;
   sides: [BantahBroAgentBattleSide, BantahBroAgentBattleSide];
   leadingSideId: string;
   confidenceSpread: number;
@@ -1242,6 +1247,131 @@ function buildFighterProfileBattle(
   };
 }
 
+
+function buildChallengeBattle(
+  challenge: BotaAgentChallenge,
+  now: Date,
+  loadoutMap: Map<string, any[]>
+): BantahBroAgentBattle {
+  const battleWindowMs = getBattleWindowMs();
+  const startsAtMs = challenge.scheduledAt ? new Date(challenge.scheduledAt).getTime() : now.getTime();
+  const startsAt = new Date(startsAtMs);
+  const endsAt = new Date(startsAt.getTime() + battleWindowMs);
+  
+  const leftId = challenge.challengerAgent.id;
+  const rightId = challenge.opponentAgent.id;
+  const leftLoadouts = loadoutMap.get(leftId) || [];
+  const rightLoadouts = loadoutMap.get(rightId) || [];
+
+  const mapTool = (l: any) => ({
+    id: l.tool_id,
+    name: l.tool_name || l.name,
+    imageUrl: l.tool_metadata?.image_url || l.image_url || l.metadata?.image_url,
+    type: l.tool_type || "item",
+    rarity: String(l.tool_rarity || "COMMON").toUpperCase(),
+  });
+
+  const leftTools = leftLoadouts.map(mapTool);
+  const rightTools = rightLoadouts.map(mapTool);
+
+  const calculateToolScore = (tools: any[]) => {
+    let score = 100;
+    for (const tool of tools) {
+      if (tool.rarity === "EPIC") score += 30;
+      else if (tool.rarity === "RARE") score += 15;
+      else if (tool.rarity === "COMMON") score += 5;
+      else score += 10;
+    }
+    return score;
+  };
+
+  const leftScore = calculateToolScore(leftTools);
+  const rightScore = calculateToolScore(rightTools);
+  const totalScore = Math.max(1, leftScore + rightScore);
+  const leftConfidence = Math.max(5, Math.min(95, Math.round((leftScore / totalScore) * 100)));
+  const rightConfidence = 100 - leftConfidence;
+
+  const buildSide = (agent: any, confidence: number, tools: any[], score: number): BantahBroAgentBattleSide => ({
+    id: agent.id,
+    label: agent.name,
+    agentName: agent.name,
+    tokenSymbol: "BOTA",
+    tokenName: agent.name,
+    emoji: "⚔️",
+    logoUrl: normalizeStoredAvatarUrl(agent.avatarUrl, agent.id),
+    chainId: null,
+    chainLabel: "BOTA",
+    tokenAddress: null,
+    pairAddress: null,
+    pairUrl: null,
+    dexId: null,
+    priceUsd: null,
+    priceDisplay: "Challenger",
+    priceChangeM5: 0,
+    priceChangeH1: 0,
+    priceChangeH24: 0,
+    change: formatPercent(0),
+    direction: "flat",
+    volumeM5: 0,
+    volumeH1: 0,
+    volumeH24: 0,
+    liquidityUsd: null,
+    marketCap: null,
+    buysM5: 0,
+    sellsM5: 0,
+    buysH1: 0,
+    sellsH1: 0,
+    buysH24: 0,
+    sellsH24: 0,
+    pairAgeMinutes: null,
+    dataSource: "fighter-profile",
+    dataUpdatedAt: now.toISOString(),
+    score,
+    confidence,
+    status: "attacking",
+    loadoutTools: tools,
+  });
+
+  const leftSide = buildSide(challenge.challengerAgent, leftConfidence, leftTools, leftScore);
+  const rightSide = buildSide(challenge.opponentAgent, rightConfidence, rightTools, rightScore);
+
+  const battleId = normalizeBattleIdentity(`challenge:${challenge.challengeCode}`);
+
+  return {
+    id: battleId,
+    title: `${challenge.challengerAgent.name} vs ${challenge.opponentAgent.name}`,
+    battleType: "agent-battle",
+    status: endsAt.getTime() > now.getTime() ? "live" : "expired",
+    winnerLogic: "BOTA Challenge Arena Engine: Live 1v1 PvP combat heavily influenced by equipped Gen1 Tools and Packs (EPIC +30, RARE +15, COMMON +5).",
+    startsAt: startsAt.toISOString(),
+    endsAt: endsAt.toISOString(),
+    timeRemainingSeconds: Math.max(0, Math.ceil((endsAt.getTime() - now.getTime()) / 1000)),
+    spectators: 1500,
+    spectatorBantCredits: 0,
+    rewardClaimBantCredits: 0,
+    bantCreditsEarned: 0,
+    isChallenge: true,
+    challengeCode: challenge.challengeCode,
+    sides: [leftSide, rightSide],
+    leadingSideId: leftSide.id,
+    confidenceSpread: Math.abs(leftConfidence - rightConfidence),
+    events: [
+      {
+        id: `${battleId}-start`,
+        time: eventTime(now, 5),
+        type: "system",
+        severity: "hot",
+        sideId: null,
+        agentName: "Main Event",
+        message: `Main Event PvP Challenge begins! ${challenge.stakeAmount} ${challenge.stakeCurrency} at stake. Win odds shifted by equipped tools!`,
+        metricLabel: "stake",
+        metricValue: `${challenge.stakeAmount} ${challenge.stakeCurrency}`,
+      }
+    ],
+    updatedAt: now.toISOString(),
+  };
+}
+
 async function buildBattleFighterPool(requestedBattles: number) {
   const importedLimit = Math.max(32, requestedBattles * 4);
   const externalLimit = Math.max(24, requestedBattles * 3);
@@ -1265,20 +1395,37 @@ async function buildBattleFighterPool(requestedBattles: number) {
 }
 
 async function buildFeed(limit: number): Promise<BantahBroAgentBattlesFeed> {
-  const requestedBattles = clamp(Math.round(limit || 3), 1, 50);
+  const requestedBattles = clamp(Math.round(limit || 50), 1, 50);
   const now = new Date();
   pruneExpiredBattleSnapshots(now);
   lockedRoundBattleSnapshots = lockedRoundBattleSnapshots.filter((battle) =>
-    battle.sides.some((side) => side.dataSource === "fighter-profile" || side.dataSource === "ens-subgraph"),
+    battle.isChallenge || battle.sides.some((side) => side.dataSource === "fighter-profile" || side.dataSource === "ens-subgraph"),
   );
+  
   if (lockedRoundBattleSnapshots.length >= requestedBattles) {
     return buildLockedRoundFeed(now, requestedBattles);
   }
+
+  // 1. Fetch pending User Challenges
+  const pendingChallengesResponse = await listBotaAgentChallenges({ limit: 5, status: "all" });
+  const activeChallenges = pendingChallengesResponse.challenges.filter(c => c.status !== "resolved" && c.status !== "cancelled" && c.status !== "expired");
+
+  const loadoutMap = new Map<string, any[]>();
+  if (activeChallenges.length > 0) {
+    const agentIds = activeChallenges.flatMap(c => [c.challengerAgent.id, c.opponentAgent.id]);
+    const map = await getFighterToolLoadoutMap(agentIds);
+    map.forEach((value, key) => loadoutMap.set(key, value));
+  }
+
+  const challengeBattles = activeChallenges.map(challenge => buildChallengeBattle(challenge, now, loadoutMap));
+
   const fighterPool = await buildBattleFighterPool(requestedBattles);
   const pairs = pairProfilesForRound(fighterPool, requestedBattles, now);
-  const battles = pairs.map(([left, right], index) =>
+  const autoBattles = pairs.map(([left, right], index) =>
     buildFighterProfileBattle(left, right, index, now),
   );
+  
+  const battles = [...challengeBattles, ...autoBattles];
   lockedRoundBattleSnapshots = battles;
   lockedRoundBattleIds = battles.map((battle) => battle.id);
   lockedRoundCandidateSnapshots = [];
@@ -1288,7 +1435,7 @@ async function buildFeed(limit: number): Promise<BantahBroAgentBattlesFeed> {
 
 export async function getLiveBantahBroAgentBattles(limit = 3, options: LiveAgentBattlesOptions = {}) {
   const now = Date.now();
-  const requestedLimit = clamp(Math.round(limit || 3), 1, 50);
+  const requestedLimit = clamp(Math.round(limit || 50), 1, 50);
   const hydrateLiveStats = options.hydrateLiveStats !== false;
   const trimFeed = (feed: BantahBroAgentBattlesFeed): BantahBroAgentBattlesFeed => ({
     ...feed,
@@ -1363,7 +1510,7 @@ export async function getLiveBantahBroAgentBattles(limit = 3, options: LiveAgent
   return pendingFeedPromise.then(syncTrimmedFeed).then(maybeHydrateLiveStats);
 }
 
-export async function getUpcomingBotaArenaQueue(limit = 50) {
+export async function getUpcomingBotaArenaQueue(limit = 5) {
   const requestedBattles = clamp(Math.round(limit || 50), 1, 50);
   const now = new Date();
   const battleWindowMs = getBattleWindowMs();

@@ -22,13 +22,14 @@ function parseBoolean(value: unknown, fallback: boolean) {
   return fallback;
 }
 
-async function getPublishedBattleIds() {
+async function getPublishedBattleIds(chainId: number) {
   try {
     const result = await db.execute(sql`
       SELECT DISTINCT "battle_id"
       FROM "onchain_sim_battle_reward_claims"
       WHERE "battle_tx_hash" IS NOT NULL
         AND "batch_tx_hash" IS NOT NULL
+        AND "chain_id" = ${chainId}
     `);
     return new Set(rowsOf<{ battle_id: string }>(result).map((row) => String(row.battle_id)));
   } catch (error: any) {
@@ -69,7 +70,7 @@ export async function runBotaLiveOnchainRecorderOnce(options: {
       : parseBoolean(process.env.BOTA_ONCHAIN_RECORDER_EXECUTE, true);
 
   const feed = await getLiveBantahBroAgentBattles(scanLimit);
-  const publishedBattleIds = await getPublishedBattleIds();
+  const publishedBattleIds = await getPublishedBattleIds(chainId);
   const results: Array<Record<string, unknown>> = [];
   let recorded = 0;
   let skipped = 0;

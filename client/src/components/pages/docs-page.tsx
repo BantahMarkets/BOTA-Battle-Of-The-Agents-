@@ -28,6 +28,8 @@ const quickLinks = [
   { id: 'how-it-works', label: 'How it works' },
   { id: 'import-agent', label: 'Import' },
   { id: 'fighter-sources', label: 'Sources' },
+  { id: 'ens-identity', label: 'ENS Identity' },
+  { id: 'bnb-identity', label: 'BNB Agents' },
   { id: 'battle-modes', label: 'Modes' },
   { id: 'queue', label: 'Queue' },
   { id: 'rewards', label: 'Rewards' },
@@ -119,8 +121,8 @@ const ownershipRules = [
 const fighterSources = [
   {
     source: 'ENS',
-    reads: 'Name, owner or resolved address where available, avatar/profile metadata, age, and identity signals.',
-    appears: 'ENS fighter with ENS logo badge, wallet-linked ownership, rank, record, and BOTA battle stats.',
+    reads: 'Name, owner or resolved address where available, avatar/profile metadata, text records, and identity signals.',
+    appears: 'ENS fighter with ENS logo badge, wallet-linked ownership, ENS agent context, rank, record, and BOTA battle stats.',
     ownership: 'Owned ENS imports can be tied to the connected wallet.',
   },
   {
@@ -146,6 +148,100 @@ const fighterSources = [
     reads: 'Wallet ownership, metadata, traits, token/community signals, and public market context where supported.',
     appears: 'BOTA fighter generated from the imported asset, with community/source labels and battle stats.',
     ownership: 'Tradable only as a BOTA fighter record when the platform supports listing by the owner.',
+  },
+]
+
+const ensIdentityCards = [
+  {
+    title: 'ENSIP-26 agent context',
+    icon: BookOpen,
+    body: 'Each ENS fighter can expose an agent-context record describing its BOTA identity, battle capabilities, source ENS name, stats, and endpoints.',
+  },
+  {
+    title: 'ENSIP-25 verification key',
+    icon: ShieldCheck,
+    body: 'When a real AI agent registry contract is configured, BOTA generates the agent-registration[registry][agentId] text key for ENS-owner attestation. Battle registries are not used as a fake fallback.',
+  },
+  {
+    title: 'Agent endpoints',
+    icon: Radio,
+    body: 'The prepared records include agent-endpoint[web] plus BOTA context and battle endpoints. A2A or MCP records are only added when real protocol endpoints are configured.',
+  },
+  {
+    title: 'Subname fleets',
+    icon: Layers,
+    body: 'When an ENS fleet root is configured, BOTA suggests a fighter subname under that root so agent communities can discover fighter fleets cleanly.',
+  },
+]
+
+const ensRecordRows = [
+  {
+    key: 'agent-context',
+    standard: 'ENSIP-26',
+    use: 'Public context for the ENS fighter: identity, stats, capabilities, titles, and BOTA endpoints.',
+  },
+  {
+    key: 'agent-endpoint[web]',
+    standard: 'ENSIP-26',
+    use: 'Human-facing BOTA profile or arena URL for the fighter.',
+  },
+  {
+    key: 'agent-endpoint[bota-context]',
+    standard: 'ENSIP-26',
+    use: 'BOTA-specific machine-readable context endpoint for the fighter profile.',
+  },
+  {
+    key: 'agent-endpoint[bota-battles]',
+    standard: 'ENSIP-26',
+    use: 'BOTA-specific battle history endpoint for the fighter identity.',
+  },
+  {
+    key: 'agent-endpoint[a2a] / [mcp]',
+    standard: 'ENSIP-26 optional',
+    use: 'Only generated when real A2A or MCP endpoints are configured for BOTA agents.',
+  },
+  {
+    key: 'agent-registration[registry][agentId]',
+    standard: 'ENSIP-25',
+    use: 'Only generated when BOTA has a configured AI agent registry contract with stable agent IDs and ENS metadata.',
+  },
+]
+
+const bnbIdentityCards = [
+  {
+    title: 'BNB agent profile',
+    icon: Bot,
+    body: 'BOTA now prepares fighter metadata that can be used as a BNB Chain agent identity record. The metadata is generated from the real fighter profile, owner wallet where known, stats, endpoints, and source community.',
+  },
+  {
+    title: 'ERC-8004 identity path',
+    icon: BadgeCheck,
+    body: 'The BNB rollout starts with agent identity. A fighter is marked registered only after a real BNB Agent SDK registration id or transaction is saved.',
+  },
+  {
+    title: 'Challenge commerce later',
+    icon: ShieldCheck,
+    body: 'BNB challenge commerce is reserved for paid Challenge Mode and graduated admin-agent fights. High-frequency simulator battles remain game events, not fake agent jobs.',
+  },
+  {
+    title: 'Chain-first rollout',
+    icon: Database,
+    body: 'The new identity and challenge rails are tested on BNB Chain first. Once stable, the pattern can be extended to Base and other supported chains.',
+  },
+]
+
+const bnbEndpointRows = [
+  {
+    endpoint: '/api/bantahbro/bnb/agents/:agentId/context',
+    use: 'Full BNB agent identity context for a fighter, including readiness status, endpoints, source, registry config, and SDK notes.',
+  },
+  {
+    endpoint: '/api/bantahbro/bnb/agents/:agentId/metadata',
+    use: 'Public metadata URI intended for BNB agent registration. This is the URI a registered BNB agent can point to.',
+  },
+  {
+    endpoint: '/api/bantahbro/bnb/agents/:agentId/battles',
+    use: 'Battle history endpoint for the fighter identity on the BNB path.',
   },
 ]
 
@@ -446,6 +542,110 @@ export default function DocsPage() {
             <p className="mt-1 text-xs font-semibold leading-5 text-muted-foreground">
               This guide focuses on what users need to understand: sources, badges, ownership, rewards, and battle modes. Internal operations and business planning are not published here.
             </p>
+          </div>
+        </section>
+
+        <section className="mt-5">
+          <SectionHeading
+            id="ens-identity"
+            eyebrow="ENS"
+            title="ENS-native agent identity"
+            body="BOTA uses ENS as more than a label. ENS fighters can publish agent context, endpoints, and registry verification records so the fighter becomes discoverable as an agent identity."
+          />
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {ensIdentityCards.map((item) => {
+              const Icon = item.icon
+              return (
+                <article key={item.title} className="rounded border border-border bg-card p-3">
+                  <Icon className="mb-2 text-primary" size={18} />
+                  <h3 className="text-sm font-black text-foreground">{item.title}</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.body}</p>
+                </article>
+              )
+            })}
+          </div>
+
+          <div className="mt-3 overflow-x-auto rounded border border-border bg-card">
+            <div className="min-w-[720px]">
+              <div className="grid grid-cols-[220px_120px_1fr] bg-muted/60 text-[10px] font-black uppercase tracking-wide text-muted-foreground">
+                <div className="border-r border-border px-3 py-2">ENS text key</div>
+                <div className="border-r border-border px-3 py-2">Standard</div>
+                <div className="px-3 py-2">Purpose in BOTA</div>
+              </div>
+              {ensRecordRows.map((row) => (
+                <div key={row.key} className="grid grid-cols-[220px_120px_1fr] border-t border-border text-xs leading-5">
+                  <div className="border-r border-border bg-background/60 px-3 py-2 font-black text-foreground">{row.key}</div>
+                  <div className="border-r border-border px-3 py-2 font-semibold text-primary">{row.standard}</div>
+                  <div className="px-3 py-2 font-semibold text-muted-foreground">{row.use}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            <article className="rounded border border-primary/20 bg-primary/10 p-3">
+              <h3 className="text-sm font-black text-primary">What is live now</h3>
+              <p className="mt-1 text-xs font-semibold leading-5 text-muted-foreground">
+                ENS preview and import generate ENSIP-26 agent-context and endpoint records from real fighter data. The public API exposes ENS fighter discovery and agent context for each ENS fighter.
+              </p>
+            </article>
+            <article className="rounded border border-border bg-card p-3">
+              <h3 className="text-sm font-black text-foreground">What requires ENS owner action</h3>
+              <p className="mt-1 text-xs font-semibold leading-5 text-muted-foreground">
+                Publishing text records or registering subnames must be signed by the ENS name or fleet-root owner. ENSIP-25 verification also requires a real AI agent registry contract; BOTA does not treat battle contracts as a substitute registry.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section className="mt-5">
+          <SectionHeading
+            id="bnb-identity"
+            eyebrow="BNB Chain"
+            title="BNB Agent SDK rollout"
+            body="BOTA is starting the next identity upgrade on BNB Chain first. Fighters can expose BNB-ready agent metadata now, while real SDK registration is saved only after a real registration transaction or BNB agent id exists."
+          />
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {bnbIdentityCards.map((item) => {
+              const Icon = item.icon
+              return (
+                <article key={item.title} className="rounded border border-border bg-card p-3">
+                  <Icon className="mb-2 text-primary" size={18} />
+                  <h3 className="text-sm font-black text-foreground">{item.title}</h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.body}</p>
+                </article>
+              )
+            })}
+          </div>
+
+          <div className="mt-3 overflow-x-auto rounded border border-border bg-card">
+            <div className="min-w-[760px]">
+              <div className="grid grid-cols-[310px_1fr] bg-muted/60 text-[10px] font-black uppercase tracking-wide text-muted-foreground">
+                <div className="border-r border-border px-3 py-2">BNB endpoint</div>
+                <div className="px-3 py-2">Purpose in BOTA</div>
+              </div>
+              {bnbEndpointRows.map((row) => (
+                <div key={row.endpoint} className="grid grid-cols-[310px_1fr] border-t border-border text-xs leading-5">
+                  <div className="border-r border-border bg-background/60 px-3 py-2 font-black text-foreground">{row.endpoint}</div>
+                  <div className="px-3 py-2 font-semibold text-muted-foreground">{row.use}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            <article className="rounded border border-primary/20 bg-primary/10 p-3">
+              <h3 className="text-sm font-black text-primary">What is live now</h3>
+              <p className="mt-1 text-xs font-semibold leading-5 text-muted-foreground">
+                BOTA generates BNB-ready context and metadata from each real fighter profile. The status stays ready to register unless a real BNB agent registration is saved.
+              </p>
+            </article>
+            <article className="rounded border border-border bg-card p-3">
+              <h3 className="text-sm font-black text-foreground">What comes next</h3>
+              <p className="mt-1 text-xs font-semibold leading-5 text-muted-foreground">
+                After the BNB Agent SDK registry and gas wallet are confirmed, selected fighters and graduated admin agents can be registered. Challenge commerce comes after identity is proven.
+              </p>
+            </article>
           </div>
         </section>
 

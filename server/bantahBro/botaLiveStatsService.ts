@@ -4,6 +4,7 @@ import { BANTCREDIT_BATTLE_WATCH_REWARD_TIERS, BANTCREDIT_BATTLE_WATCH_TRANSACTI
 import { normalizeEvmAddress } from "@shared/onchainConfig";
 import type { BotaFighterProfile } from "@shared/botaFighterProfile";
 import type { BantahBroAgentBattle, BantahBroAgentBattlesFeed } from "./agentBattleService";
+import { getFighterToolLoadoutMap } from "./gen1EconomyService";
 
 const LIVE_STATS_QUERY_TIMEOUT_MS = Number(process.env.BOTA_LIVE_STATS_QUERY_TIMEOUT_MS || 1_500);
 const LIVE_STATS_CACHE_TTL_MS = Math.max(
@@ -496,7 +497,7 @@ export async function attachBotaFighterLiveStats<T extends BotaFighterProfile>(p
 }
 
 export async function hydrateAgentBattleFeedLiveStats(feed: BantahBroAgentBattlesFeed): Promise<BantahBroAgentBattlesFeed> {
-  const [battleStats, fighterStats] = await Promise.all([
+  const [battleStats, fighterStats, loadoutMap] = await Promise.all([
     getBotaBattleLiveStats(feed.battles.map((battle) => battle.id)),
     getFighterLiveStats(
       feed.battles.flatMap((battle) =>
@@ -507,6 +508,9 @@ export async function hydrateAgentBattleFeedLiveStats(feed: BantahBroAgentBattle
         })),
       ),
       { includeBattleLiveStats: false },
+    ),
+    getFighterToolLoadoutMap(
+      feed.battles.flatMap((battle) => battle.sides.map((side) => side.id)),
     ),
   ]);
 
@@ -540,6 +544,17 @@ export async function hydrateAgentBattleFeedLiveStats(feed: BantahBroAgentBattle
         liveStatsUpdatedAt: live?.updatedAt || new Date().toISOString(),
         sides: battle.sides.map((side) => {
           const sideStats = fighterStats.get(side.id);
+          const rawLoadouts = loadoutMap.get(side.id) || [];
+          const loadoutTools = rawLoadouts.map((row) => {
+            const metadata = (row.tool_metadata && typeof row.tool_metadata === 'object' && !Array.isArray(row.tool_metadata)) ? row.tool_metadata as any : {};
+            return {
+              id: String(row.tool_id || ""),
+              name: String(row.tool_name || ""),
+              imageUrl: String(metadata.imageUrl || ""),
+              type: String(metadata.tacticalEffect || ""),
+            };
+          });
+
           return {
             ...side,
             bantCreditsEarned: Math.max(
@@ -551,6 +566,7 @@ export async function hydrateAgentBattleFeedLiveStats(feed: BantahBroAgentBattle
               normalizePositiveNumber(sideStats?.liveSpectators),
               spectatorCount,
             ),
+            loadoutTools,
           };
         }) as BantahBroAgentBattle["sides"],
       };

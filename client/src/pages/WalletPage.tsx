@@ -1071,7 +1071,7 @@ export default function WalletPage() {
           open={isDepositDialogOpen}
           onOpenChange={setIsDepositDialogOpen}
         >
-          <DialogContent className="rounded-2xl max-w-xs mx-auto border-0 bg-white dark:bg-slate-800">
+          <DialogContent className="rounded-2xl max-w-xs mx-auto">
             {isOnchainBuild ? (
               <>
                 <DialogHeader className="pb-2">
@@ -1149,7 +1149,7 @@ export default function WalletPage() {
 
         {/* Swap Dialog */}
         <Dialog open={isSwapDialogOpen} onOpenChange={setIsSwapDialogOpen}>
-          <DialogContent className="rounded-2xl max-w-xs mx-auto border-0 bg-white dark:bg-slate-800">
+          <DialogContent className="rounded-2xl max-w-xs mx-auto">
             {isOnchainBuild ? (
               <>
                 <DialogHeader className="pb-2">
@@ -1305,7 +1305,7 @@ export default function WalletPage() {
           open={isWithdrawDialogOpen}
           onOpenChange={setIsWithdrawDialogOpen}
         >
-          <DialogContent className="rounded-2xl max-w-xs mx-auto border-0 bg-white dark:bg-slate-800">
+          <DialogContent className="rounded-2xl max-w-xs mx-auto">
             {isOnchainBuild ? (
               <>
                 <DialogHeader className="pb-2">

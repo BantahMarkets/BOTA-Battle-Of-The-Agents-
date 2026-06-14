@@ -81,7 +81,7 @@ declare global {
   }
 }
 
-const FIGHTING_GAME_ASSET_VERSION = 'engine-20260610-perf-audio01';
+const FIGHTING_GAME_ASSET_VERSION = 'engine-20260614-sfx-fix01';
 const GAME_SOUND_STORAGE_KEY = 'bota.game.soundEnabled';
 const ARENA_SWITCH_MIN_MS = 180;
 const FIGHTING_GAME_SCRIPT_PATHS = [
@@ -516,6 +516,11 @@ export function FightingGameArenaEmbed({
         engineRef.current = null;
       }
       localEngine?.destroy?.();
+      if (typeof window !== 'undefined' && window.__botaArenaMusicElement) {
+        try {
+          window.__botaArenaMusicElement.pause();
+        } catch (e) {}
+      }
     };
   }, [applyArenaPayload, arenaLabel, arenaSeed, fighterPaths, finishArenaTransition, onArenaAdvance]);
 

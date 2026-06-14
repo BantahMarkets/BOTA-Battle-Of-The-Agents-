@@ -3,12 +3,42 @@
 import AgentBattle from '@/components/sections/agent-battle';
 import { ArrowUpRight, Megaphone } from 'lucide-react';
 import type { AppSection } from '@/app/page';
+import { useQuery } from '@tanstack/react-query';
+import type { AgentBattleFeed } from '@/types/agentBattle';
+import { getBattleTimeRemainingSeconds } from '@/lib/bantahbro/battleTiming';
 
 interface RightPanelProps {
   selectedToken: string;
   defaultTab?: string;
+  activeSection?: AppSection;
   onNavigate?: (section: AppSection) => void;
   onOpenBattle?: (battleId: string) => void;
+}
+
+function currentLiveBattle(feed: AgentBattleFeed | undefined) {
+  return (feed?.battles || []).find(
+    (entry) => getBattleTimeRemainingSeconds(entry.endsAt, entry.timeRemainingSeconds) > 0,
+  );
+}
+
+function ChallengePredictionCard({ winnerLogic }: { winnerLogic?: string }) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="border-b border-border bg-background px-3 py-2 flex items-center justify-between shrink-0">
+        <span className="text-xs font-bold text-transparent bg-clip-text bg-gradient-to-br from-red-400 to-yellow-500 uppercase tracking-widest drop-shadow-sm">PREDICTION</span>
+        <span className="rounded bg-red-500/20 border border-red-500/30 px-1.5 py-0.5 text-[10px] font-black text-red-400 animate-pulse">LIVE</span>
+      </div>
+      <div className="flex-1 p-3 flex flex-col justify-center bg-[radial-gradient(circle_at_top_right,rgba(220,38,38,0.15),transparent_60%),linear-gradient(135deg,rgba(9,9,9,0.98),rgba(18,18,18,0.95))]">
+        <div className="text-xs font-black text-white/80 mb-3 text-center leading-relaxed">
+          {winnerLogic || "BOTA Arena Engine: agent profile rank, reputation, battle record, watch activity, and deterministic round RNG decide the live simulation."}
+        </div>
+        <div className="flex gap-2 justify-center">
+          <div className="flex-1 bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-2 rounded font-black text-center text-sm shadow-[0_0_15px_rgba(34,197,94,0.1)]">YES 65%</div>
+          <div className="flex-1 bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-2 rounded font-black text-center text-sm shadow-[0_0_15px_rgba(239,68,68,0.1)]">NO 35%</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AdsPlacementCard({ onNavigate }: { onNavigate?: (section: AppSection) => void }) {
@@ -56,18 +86,31 @@ function AdsPlacementCard({ onNavigate }: { onNavigate?: (section: AppSection) =
   );
 }
 
-export default function RightPanel({ onNavigate, onOpenBattle }: RightPanelProps) {
+export default function RightPanel({ activeSection, onNavigate, onOpenBattle }: RightPanelProps) {
+  const { data } = useQuery<AgentBattleFeed>({
+    queryKey: ['/api/bantahbro/agent-battles/live', { limit: '3' }],
+  });
+  const liveBattle = currentLiveBattle(data);
+  const isChallenge = liveBattle?.isChallenge;
+
   return (
     <div className="w-full lg:w-72 flex flex-col gap-0.5 overflow-hidden shrink-0">
-      {/* ADS PLACEMENT */}
-      <div className="h-auto lg:flex-[5] bg-card border border-border rounded overflow-hidden flex flex-col min-h-0">
-        <AdsPlacementCard onNavigate={onNavigate} />
-      </div>
+      {activeSection === 'battles' && isChallenge ? (
+        <div className="h-auto lg:flex-[3] bg-card border border-border rounded overflow-hidden flex flex-col min-h-0">
+          <ChallengePredictionCard winnerLogic={liveBattle.winnerLogic} />
+        </div>
+      ) : activeSection !== 'marketplace' ? (
+        <div className="h-auto lg:flex-[5] bg-card border border-border rounded overflow-hidden flex flex-col min-h-0">
+          <AdsPlacementCard onNavigate={onNavigate} />
+        </div>
+      ) : null}
 
       {/* AGENT BATTLE - compact */}
-      <div className="h-auto lg:flex-[4] bg-card border border-border rounded overflow-hidden flex flex-col min-h-0">
-        <AgentBattle onViewBattle={(battleId) => onOpenBattle?.(battleId) ?? onNavigate?.('battles')} />
-      </div>
+      {activeSection === 'battles' && (
+        <div className="h-auto lg:flex-[4] bg-card border border-border rounded overflow-hidden flex flex-col min-h-0">
+          <AgentBattle onViewBattle={(battleId) => onOpenBattle?.(battleId) ?? onNavigate?.('battles')} />
+        </div>
+      )}
 
     </div>
   );

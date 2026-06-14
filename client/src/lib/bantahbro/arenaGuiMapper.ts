@@ -235,6 +235,7 @@ function mapSideState(
     health: confidence,
     status: side.status,
     isLeading: side.id === leadingSideId,
+    loadoutTools: side.loadoutTools || [],
   };
 }
 

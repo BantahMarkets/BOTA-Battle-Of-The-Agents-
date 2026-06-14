@@ -70,6 +70,16 @@ export const botaArenaAdapterResultSchema = z.object({
   issues: z.array(botaArenaAdapterIssueSchema),
 });
 
+export const botaArenaToolSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  tier: z.string(),
+  role: z.string(),
+  powerRating: z.number(),
+  effectDesc: z.string(),
+  soulDrainEnabled: z.boolean().default(false),
+});
+
 export const botaArenaFighterSchema = z.object({
   id: z.string().trim().min(1).max(180),
   name: z.string().trim().min(1).max(120),
@@ -90,6 +100,8 @@ export const botaArenaFighterSchema = z.object({
   score: z.number().min(0).max(100),
   cooldowns: z.record(z.number().int().min(0).max(10)).default({}),
   statusEffects: z.array(z.string().trim().min(1).max(80)).default([]),
+  combatProfile: z.any().optional(),
+  tools: z.array(botaArenaToolSchema).default([]),
 });
 
 export const botaArenaRoundEventSchema = z.object({

@@ -651,12 +651,17 @@ export default function TopBar({ onNavigate, onOpenBattle, activeSection, active
               type="button"
               onClick={() => onNavigate?.('rewards')}
               title={bantCreditStats?.basis || 'Total BantCredit across Bantah ecosystem'}
-              className="hidden md:flex text-sm px-3 py-1.5 bg-input rounded items-center gap-1.5 hover:bg-sidebar-accent transition"
+              className="hidden md:flex text-sm pr-3 pl-1.5 py-1 rounded-full items-center gap-2 border border-amber-500/30 bg-gradient-to-r from-amber-500/10 to-transparent hover:from-amber-500/20 transition shadow-[0_0_12px_rgba(245,158,11,0.15)]"
             >
-              <span>BantCredit</span>
-              <span className="text-primary font-bold">
-                {bantCreditStatsLoading ? '...' : formatCompact(bantCreditStats?.lifetimeEarned)}
-              </span>
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-yellow-400 to-amber-600 shadow-inner">
+                <span className="text-[10px] font-black text-amber-950">BC</span>
+              </div>
+              <div className="flex flex-col items-start justify-center gap-0.5">
+                <span className="text-[9px] font-bold uppercase tracking-wider leading-none text-amber-500/80">Platform BC</span>
+                <span className="text-xs font-black leading-none text-amber-500">
+                  {bantCreditStatsLoading ? '...' : formatCompact(bantCreditStats?.lifetimeEarned)}
+                </span>
+              </div>
             </button>
             <button
               type="button"
@@ -718,8 +723,8 @@ export default function TopBar({ onNavigate, onOpenBattle, activeSection, active
             }
           }
         `}</style>
-        {true && (
-          <div className={`hidden sm:block overflow-hidden border-border bg-background/50 px-2 py-1.5 ${isBattlesPage ? '' : 'border-t'}`}>
+        {isBattlesPage && (
+          <div className="hidden sm:block overflow-hidden border-border bg-background/50 px-2 py-1.5 border-t">
             {fighterStripSlides.length > 0 && (
               <div
                 className="bb-battle-strip-track flex w-max items-center gap-2"

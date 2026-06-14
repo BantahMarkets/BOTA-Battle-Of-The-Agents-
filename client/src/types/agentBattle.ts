@@ -49,6 +49,7 @@ export type AgentBattleSide = {
   bantCreditsEarned?: number | null;
   liveSpectators?: number | null;
   status: 'attacking' | 'defending' | 'staggered' | 'holding';
+  loadoutTools?: { id: string; name: string; imageUrl: string; type: string }[];
 };
 
 export type AgentBattleEvent = {
@@ -77,6 +78,8 @@ export type AgentBattle = {
   rewardClaimBantCredits?: number | null;
   bantCreditsEarned?: number | null;
   liveStatsUpdatedAt?: string | null;
+  isChallenge?: boolean;
+  challengeCode?: string;
   sides: [AgentBattleSide, AgentBattleSide];
   leadingSideId: string;
   confidenceSpread: number;

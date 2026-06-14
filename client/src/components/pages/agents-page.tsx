@@ -29,7 +29,9 @@ import {
   type FighterSourceKind,
 } from '@/lib/bantahbro/fighterIdentity'
 import { getBotaDerivativeFighter } from '@shared/botaDerivativeFighter'
-
+import { BotaInventoryBrowser } from '@/components/BotaInventoryBrowser'
+import { BotaPreBattleLoadout } from '@/components/BotaPreBattleLoadout'
+import { useBotaInventory } from '@/hooks/useBotaInventory'
 type AgentSourceKind = FighterSourceKind
 
 type FighterProfilesFeed = {
@@ -389,10 +391,11 @@ async function fetchBotaAgentDirectory(): Promise<AgentDirectory> {
 
 export default function AgentsPage() {
   const queryClient = useQueryClient()
-  const { isAuthenticated, isLoading: authLoading, login } = useAuth()
+  const { isAuthenticated, isLoading: authLoading, login, user } = useAuth()
   const { toast } = useToast()
   const [challengeTarget, setChallengeTarget] = useState<DirectoryAgent | null>(null)
   const [challengeForm, setChallengeForm] = useState<ChallengeForm | null>(null)
+  const [showPreBattle, setShowPreBattle] = useState(false)
   const [followOverrides, setFollowOverrides] = useState<Record<string, AgentFollowFeed['states'][number]>>({})
   const { data, isLoading, isError, error } = useQuery<AgentDirectory>({
     queryKey: ['/api/bantahbro/agents-directory'],
@@ -401,6 +404,10 @@ export default function AgentsPage() {
     staleTime: 15_000,
     refetchInterval: 30_000,
   })
+
+  const [activeTab, setActiveTab] = useState<'directory' | 'loadout'>('directory')
+  const viewerWallet = typeof (user as any)?.walletAddress === 'string' ? (user as any).walletAddress : null
+  const { tools: inventoryTools, equipTool, unequipTool } = useBotaInventory(viewerWallet)
 
   const agents = data?.agents || []
   const agentIds = useMemo(() => agents.map((agent) => agent.id), [agents])
@@ -438,6 +445,7 @@ export default function AgentsPage() {
       queryClient.invalidateQueries({ queryKey: ['/api/bantahbro/agent-challenges'] })
       setChallengeTarget(null)
       setChallengeForm(null)
+      setShowPreBattle(false)
       const challengeCode = String(result?.challenge?.challengeCode || '').trim()
       if (challengeCode) {
         const { shareUrl } = shareBotaChallenge(
@@ -520,7 +528,7 @@ export default function AgentsPage() {
     setChallengeForm((current) => (current ? { ...current, [key]: value } : current))
   }
 
-  const submitChallenge = () => {
+  const prepareChallenge = () => {
     if (!isAuthenticated) {
       login()
       return
@@ -533,6 +541,11 @@ export default function AgentsPage() {
       })
       return
     }
+    setShowPreBattle(true)
+  }
+
+  const submitChallenge = () => {
+    if (!challengeForm) return;
     createChallengeMutation.mutate(challengeForm)
   }
 
@@ -554,6 +567,22 @@ export default function AgentsPage() {
             <span className="text-xs text-muted-foreground">BOTA arena fighters</span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <div className="flex bg-background border border-border rounded p-0.5">
+              <button
+                type="button"
+                onClick={() => setActiveTab('directory')}
+                className={`px-3 py-1 rounded text-xs font-bold ${activeTab === 'directory' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                Directory
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('loadout')}
+                className={`px-3 py-1 rounded text-xs font-bold ${activeTab === 'loadout' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                My Loadout
+              </button>
+            </div>
             <a
               href={botaAppHref('/bota/import')}
               className="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground hover:bg-primary/90"
@@ -566,14 +595,28 @@ export default function AgentsPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/70 pb-2 text-[11px] text-muted-foreground">
-          <span><strong className="text-foreground">{agents.length}</strong> arena agents</span>
-          <span><strong className="text-foreground">{stats.imported}</strong> imported</span>
-          <span><strong className="text-foreground">{stats.liveSeeded}</strong> live seeded</span>
-          <span><strong className="text-foreground">{stats.wins}</strong> wins</span>
-          <span><strong className="text-foreground">{stats.challenges}</strong> challenges</span>
-          <span><strong className="text-foreground">{formatBantCredits(stats.bantCredits)}</strong> BantCredit</span>
-        </div>
+        {activeTab === 'loadout' ? (
+          <BotaInventoryBrowser 
+            walletAddress={viewerWallet || ''} 
+            tools={inventoryTools} 
+            onEquip={(toolId) => {
+              // Note: FighterID needs to be selected by the user. Hardcoding generic action for UI.
+              equipTool({ inventoryId: toolId, fighterId: 'bota:default', slot: 'primary' });
+            }}
+            onUnequip={(toolId) => {
+              unequipTool({ fighterId: 'bota:default', slot: 'primary' });
+            }}
+          />
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/70 pb-2 text-[11px] text-muted-foreground">
+              <span><strong className="text-foreground">{agents.length}</strong> arena agents</span>
+              <span><strong className="text-foreground">{stats.imported}</strong> imported</span>
+              <span><strong className="text-foreground">{stats.liveSeeded}</strong> live seeded</span>
+              <span><strong className="text-foreground">{stats.wins}</strong> wins</span>
+              <span><strong className="text-foreground">{stats.challenges}</strong> challenges</span>
+              <span><strong className="text-foreground">{formatBantCredits(stats.bantCredits)}</strong> BantCredit</span>
+            </div>
 
         {isLoading ? (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -686,6 +729,8 @@ export default function AgentsPage() {
             })}
           </div>
         )}
+        </>
+        )}
       </div>
 
       {challengeTarget && challengeForm ? (
@@ -701,6 +746,7 @@ export default function AgentsPage() {
                 onClick={() => {
                   setChallengeTarget(null)
                   setChallengeForm(null)
+                  setShowPreBattle(false)
                 }}
                 className="rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
               >
@@ -708,6 +754,16 @@ export default function AgentsPage() {
               </button>
             </div>
 
+            {showPreBattle ? (
+              <BotaPreBattleLoadout
+                viewerWallet={viewerWallet}
+                challengerAgentId={challengeForm.challengerAgentId}
+                opponentAgentName={challengeTarget.name}
+                opponentAvatarUrl={challengeTarget.avatarUrl}
+                onConfirm={submitChallenge}
+                onCancel={() => setShowPreBattle(false)}
+              />
+            ) : (
             <div className="space-y-2 p-3">
               <label className="block">
                 <span className="mb-1 block text-[9px] font-black uppercase text-muted-foreground">Your Agent</span>
@@ -812,13 +868,14 @@ export default function AgentsPage() {
 
               <button
                 type="button"
-                onClick={submitChallenge}
+                onClick={prepareChallenge}
                 disabled={createChallengeMutation.isPending}
-                className="h-9 w-full rounded bg-primary px-3 text-xs font-black text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
+                className="h-10 w-full rounded bg-primary font-black text-primary-foreground transition hover:opacity-90 disabled:opacity-60"
               >
-                {createChallengeMutation.isPending ? 'Creating...' : 'Create Challenge'}
+                {createChallengeMutation.isPending ? 'Calling out...' : 'Next: Pre-Battle Loadout'}
               </button>
             </div>
+            )}
           </div>
         </div>
       ) : null}

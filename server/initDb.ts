@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import fs, { readFileSync } from 'fs';
 import { pool } from './db';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,12 +7,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function initializeDatabase() {
   try {
-    // Read the migration file
-    const migrationPath = path.resolve(__dirname, '../migrations/0000_gray_harrier.sql');
-    const sql = readFileSync(migrationPath, 'utf-8');
-    
-    // Split statements by the drizzle-kit statement separator
-    const statements = sql.split('--> statement-breakpoint').filter(s => s.trim());
+    // Read all migration files in migrations/ and apply in filename order
+    const migrationsDir = path.resolve(__dirname, '../migrations');
+    const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+
+    let statements: string[] = [];
+    for (const file of files) {
+      try {
+        const migrationPath = path.resolve(migrationsDir, file);
+        const sql = readFileSync(migrationPath, 'utf-8');
+        const parts = sql.split('--> statement-breakpoint').filter(s => s.trim());
+        statements = statements.concat(parts);
+      } catch (err) {
+        console.warn('[INIT] Failed to read migration', file, err?.message || err);
+      }
+    }
     
     let successCount = 0;
     let skipCount = 0;

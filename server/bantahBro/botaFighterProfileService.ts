@@ -30,6 +30,12 @@ import {
 } from "./agentBattleService";
 import { attachBotaFighterLiveStats } from "./botaLiveStatsService";
 import { getExternalAgentCatalogProfiles } from "./externalAgentCatalogService";
+import {
+  buildBotaEnsAgentIdentity,
+  buildBotaEnsAgentIdentityForProfile,
+} from "./ensAgentIdentityService";
+import { buildBotaBnbAgentIdentity } from "./bnbAgentIdentityService";
+import { attachGen1EconomyToProfiles } from "./gen1EconomyService";
 
 const SERVER_ARENA_AGENT_AVATARS = [
   "/2dgame/image/mascots/actions/bantah-punch-avatar-portrait.png",
@@ -1513,6 +1519,23 @@ async function scanEnsAsset(wallet: Address) {
   try {
     const ensName = await ethereumClient.getEnsName({ address: wallet });
     if (!ensName) return [];
+    const agentId = normalizeBotaFighterAgentId(`ens:${ensName}`);
+    const ensAgentIdentity = buildBotaEnsAgentIdentity({
+      agentId,
+      displayName: ensName,
+      ensName,
+      walletAddress: wallet,
+      resolvedAddress: wallet,
+      avatarUrl: "/assets/ens-badge.jpg",
+      rank: null,
+      wins: 0,
+      losses: 0,
+      currentStreak: 0,
+      bantCreditsEarned: 0,
+      fameScore: 0,
+      titles: ["ENS Mask"],
+      tags: ["ens", "wallet-import"],
+    });
     return [
       buildWalletFighterAsset({
         seed: wallet,
@@ -1531,6 +1554,13 @@ async function scanEnsAsset(wallet: Address) {
         metadata: {
           scanner: "viem-ens-reverse",
           detectedOnchain: true,
+          ensAgentIdentity,
+          ensIdentity: {
+            name: ensName,
+            resolvedAddress: wallet,
+            avatarUrl: null,
+            textRecords: {},
+          },
         },
       }),
     ];
@@ -1592,6 +1622,77 @@ export async function previewBotaEnsFighter(input: {
     readEnsText(ensName, "com.twitter"),
     readEnsText(ensName, "com.github"),
   ]);
+  const agentId = normalizeBotaFighterAgentId(`ens:${ensName}`);
+  const sourceTextRecords = {
+    description,
+    url,
+    twitter,
+    github,
+  };
+  const draftEnsAgentIdentity = buildBotaEnsAgentIdentity({
+    agentId,
+    displayName: ensName,
+    ensName,
+    walletAddress: input.walletAddress || resolvedAddress,
+    resolvedAddress,
+    avatarUrl,
+    rank: null,
+    wins: 0,
+    losses: 0,
+    currentStreak: 0,
+    bantCreditsEarned: 0,
+    fameScore: 0,
+    titles: ["ENS Fighter"],
+    tags: ["ens", "manual-preview"],
+    sourceTextRecords,
+  });
+  const [
+    publishedContext,
+    publishedWebEndpoint,
+    publishedBotaContextEndpoint,
+    publishedBotaBattlesEndpoint,
+    publishedA2AEndpoint,
+    publishedMcpEndpoint,
+    publishedVerification,
+  ] = await Promise.all([
+    readEnsText(ensName, "agent-context"),
+    readEnsText(ensName, "agent-endpoint[web]"),
+    readEnsText(ensName, "agent-endpoint[bota-context]"),
+    readEnsText(ensName, "agent-endpoint[bota-battles]"),
+    readEnsText(ensName, "agent-endpoint[a2a]"),
+    readEnsText(ensName, "agent-endpoint[mcp]"),
+    draftEnsAgentIdentity.registry.verificationKey
+      ? readEnsText(ensName, draftEnsAgentIdentity.registry.verificationKey)
+      : Promise.resolve(null),
+  ]);
+  const ensAgentIdentity = buildBotaEnsAgentIdentity({
+    agentId,
+    displayName: ensName,
+    ensName,
+    walletAddress: input.walletAddress || resolvedAddress,
+    resolvedAddress,
+    avatarUrl,
+    rank: null,
+    wins: 0,
+    losses: 0,
+    currentStreak: 0,
+    bantCreditsEarned: 0,
+    fameScore: 0,
+    titles: ["ENS Fighter"],
+    tags: ["ens", "manual-preview"],
+    sourceTextRecords,
+    publishedTextRecords: {
+      "agent-context": publishedContext,
+      "agent-endpoint[web]": publishedWebEndpoint,
+      "agent-endpoint[bota-context]": publishedBotaContextEndpoint,
+      "agent-endpoint[bota-battles]": publishedBotaBattlesEndpoint,
+      "agent-endpoint[a2a]": publishedA2AEndpoint,
+      "agent-endpoint[mcp]": publishedMcpEndpoint,
+      ...(draftEnsAgentIdentity.registry.verificationKey
+        ? { [draftEnsAgentIdentity.registry.verificationKey]: publishedVerification }
+        : {}),
+    },
+  });
 
   const asset = buildWalletFighterAsset({
     seed: ensName,
@@ -1613,16 +1714,12 @@ export async function previewBotaEnsFighter(input: {
     metadata: {
       scanner: "viem-ens-forward",
       detectedOnchain: Boolean(resolvedAddress),
+      ensAgentIdentity,
       ensIdentity: {
         name: ensName,
         resolvedAddress,
         avatarUrl,
-        textRecords: {
-          description,
-          url,
-          twitter,
-          github,
-        },
+        textRecords: sourceTextRecords,
       },
     },
   });
@@ -1650,8 +1747,18 @@ export async function previewBotaEnsFighter(input: {
         url,
         twitter,
         github,
+        "agent-context": publishedContext,
+        "agent-endpoint[web]": publishedWebEndpoint,
+        "agent-endpoint[bota-context]": publishedBotaContextEndpoint,
+        "agent-endpoint[bota-battles]": publishedBotaBattlesEndpoint,
+        "agent-endpoint[a2a]": publishedA2AEndpoint,
+        "agent-endpoint[mcp]": publishedMcpEndpoint,
+        ...(draftEnsAgentIdentity.registry.verificationKey
+          ? { [draftEnsAgentIdentity.registry.verificationKey]: publishedVerification }
+          : {}),
       },
     },
+    ensAgentIdentity,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -2006,8 +2113,77 @@ function normalizeProfileRecord(row: BotaFighterProfileRecord): BotaFighterProfi
     metadata: baseMetadata,
     badgeLabel: row.badgeLabel || row.tokenName || row.displayName,
   });
+  const existingEnsIdentity =
+    baseMetadata.ensIdentity && typeof baseMetadata.ensIdentity === "object" && !Array.isArray(baseMetadata.ensIdentity)
+      ? (baseMetadata.ensIdentity as Record<string, unknown>)
+      : {};
+  const existingEnsTextRecords =
+    existingEnsIdentity.textRecords &&
+    typeof existingEnsIdentity.textRecords === "object" &&
+    !Array.isArray(existingEnsIdentity.textRecords)
+      ? (existingEnsIdentity.textRecords as Record<string, string | null | undefined>)
+      : {};
+  const existingEnsAgentIdentity =
+    baseMetadata.ensAgentIdentity &&
+    typeof baseMetadata.ensAgentIdentity === "object" &&
+    !Array.isArray(baseMetadata.ensAgentIdentity)
+      ? (baseMetadata.ensAgentIdentity as { published?: Record<string, string | null | undefined> })
+      : {};
+  const ensAgentIdentity = row.origin === "ens" || row.ensName
+    ? buildBotaEnsAgentIdentity({
+        agentId: row.agentId,
+        displayName: row.displayName,
+        ensName: row.ensName || row.originId || row.displayName,
+        walletAddress: row.walletAddress,
+        resolvedAddress:
+          typeof existingEnsIdentity.resolvedAddress === "string"
+            ? existingEnsIdentity.resolvedAddress
+            : row.walletAddress,
+        avatarUrl:
+          typeof existingEnsIdentity.avatarUrl === "string"
+            ? existingEnsIdentity.avatarUrl
+            : row.avatarUrl,
+        rank: row.rank,
+        wins: row.wins,
+        losses: row.losses,
+        currentStreak: row.currentStreak,
+        bantCreditsEarned: 0,
+        fameScore: toNumber(row.fameScore),
+        titles: Array.isArray(row.titles) ? row.titles : [],
+        tags: Array.isArray(row.tags) ? row.tags : [],
+        sourceTextRecords: existingEnsTextRecords,
+        publishedTextRecords: existingEnsAgentIdentity.published || {},
+      })
+    : null;
+  const bnbAgentIdentity = buildBotaBnbAgentIdentity({
+    agentId: row.agentId,
+    displayName: row.displayName,
+    origin: row.origin as BotaFighterOrigin,
+    originId: row.originId,
+    ownerAddress: row.walletAddress,
+    avatarUrl: row.avatarUrl,
+    rank: row.rank,
+    wins: row.wins,
+    losses: row.losses,
+    currentStreak: row.currentStreak,
+    bantCreditsEarned: 0,
+    fameScore: toNumber(row.fameScore),
+    titles: Array.isArray(row.titles) ? row.titles : [],
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    externalUrl: row.externalUrl,
+    tokenSymbol: row.tokenSymbol,
+    tokenName: row.tokenName,
+    sourceLabel:
+      typeof agentIdentity.sourceLabel === "string"
+        ? agentIdentity.sourceLabel
+        : typeof agentIdentity.label === "string"
+          ? agentIdentity.label
+          : null,
+  });
   const metadata = {
     ...baseMetadata,
+    ...(ensAgentIdentity ? { ensAgentIdentity } : {}),
+    bnbAgentIdentity,
     agentIdentity,
     logoBadge: {
       label: String(agentIdentity.label || "Fighter"),
@@ -2720,7 +2896,16 @@ export async function listBotaFighterProfiles(input: {
 
   const requestedLimit = Math.max(1, Math.min(Math.round(input.limit || 40), 100));
   const mergeLimit = Math.max(requestedLimit * 3, 160);
-  const catalog = await getExternalAgentCatalogProfiles({ limit: Math.max(mergeLimit, 120) });
+  const shouldLoadExternalCatalog =
+    !input.origin ||
+    input.origin === "eliza" ||
+    input.origin === "virtuals" ||
+    input.origin === "bankr" ||
+    input.origin === "agentkit" ||
+    input.origin === "game-sdk";
+  const catalog = shouldLoadExternalCatalog
+    ? await getExternalAgentCatalogProfiles({ limit: Math.max(mergeLimit, 120) })
+    : { profiles: [] as BotaFighterProfile[] };
   const catalogProfiles = input.origin
     ? catalog.profiles.filter((profile) => profile.origin === input.origin)
     : catalog.profiles;
@@ -2739,12 +2924,12 @@ export async function listBotaFighterProfiles(input: {
           .orderBy(desc(botaFighterProfiles.fameScore), asc(botaFighterProfiles.rank))
           .limit(mergeLimit);
 
-    const profiles = await attachBotaFighterArenaRecordStats(
+    const profiles = await attachGen1EconomyToProfiles(await attachBotaFighterArenaRecordStats(
       await attachBotaFighterLiveStats(
         mergeFighterProfiles(rows.map(normalizeProfileRecord), catalogProfiles, mergeLimit),
       ),
       { assignRanks: true, limit: requestedLimit },
-    );
+    ));
     return {
       profiles,
       updatedAt: new Date().toISOString(),
@@ -2757,12 +2942,12 @@ export async function listBotaFighterProfiles(input: {
     });
     return {
       ...memoryFeed,
-      profiles: await attachBotaFighterArenaRecordStats(
+      profiles: await attachGen1EconomyToProfiles(await attachBotaFighterArenaRecordStats(
         await attachBotaFighterLiveStats(
           mergeFighterProfiles(memoryFeed.profiles, catalogProfiles, mergeLimit),
         ),
         { assignRanks: true, limit: requestedLimit },
-      ),
+      )),
     };
   }
 }
@@ -2822,9 +3007,9 @@ export async function listBotaFighterProfilesForOwner(input: {
       .where(or(...ownerConditions))
       .orderBy(desc(botaFighterProfiles.updatedAt))
       .limit(requestedLimit);
-    const profiles = await attachBotaFighterArenaRecordStats(
+    const profiles = await attachGen1EconomyToProfiles(await attachBotaFighterArenaRecordStats(
       await attachBotaFighterLiveStats(rows.map(normalizeProfileRecord)),
-    );
+    ));
     return {
       profiles,
       updatedAt: new Date().toISOString(),
@@ -2859,9 +3044,9 @@ export async function getBotaFighterProfile(agentId: string, refreshLive = true)
     }
 
     if (!row) return null;
-    const [profile] = await attachBotaFighterArenaRecordStats(
+    const [profile] = await attachGen1EconomyToProfiles(await attachBotaFighterArenaRecordStats(
       await attachBotaFighterLiveStats([normalizeProfileRecord(row)]),
-    );
+    ));
     return profile || null;
   } catch (error) {
     warnFighterProfileFallback("profile get", error);
@@ -2874,11 +3059,121 @@ export async function getBotaFighterProfile(agentId: string, refreshLive = true)
     }
     const profile = memoryFighterProfiles.get(normalizedAgentId) || null;
     if (!profile) return null;
-    const [withStats] = await attachBotaFighterArenaRecordStats(
+    const [withStats] = await attachGen1EconomyToProfiles(await attachBotaFighterArenaRecordStats(
       await attachBotaFighterLiveStats([profile]),
-    );
+    ));
     return withStats || profile;
   }
+}
+
+export async function listBotaEnsAgentDiscovery(input: {
+  limit?: number;
+  refreshLive?: boolean;
+} = {}) {
+  const requestedLimit = Math.max(1, Math.min(Math.round(input.limit || 50), 100));
+  let profiles: BotaFighterProfile[] = [];
+  let source: "database" | "memory" = "database";
+  let warning: string | undefined;
+
+  try {
+    if (input.refreshLive) {
+      await withCommunityStatsTimeout(syncBotaFighterProfilesFromLiveBattles(Math.max(10, requestedLimit)), "ENS live profile refresh");
+    }
+    await withCommunityStatsTimeout(ensureBotaFighterProfilesTable(), "ENS profile table check");
+    const rows = await withCommunityStatsTimeout(
+      Promise.resolve(
+        db
+          .select()
+          .from(botaFighterProfiles)
+          .where(eq(botaFighterProfiles.origin, "ens"))
+          .orderBy(desc(botaFighterProfiles.fameScore), asc(botaFighterProfiles.rank))
+          .limit(requestedLimit),
+      ),
+      "ENS profile discovery query",
+    );
+    profiles = rows.map(normalizeProfileRecord);
+  } catch (error) {
+    source = "memory";
+    warning = "ENS fighter profile database unavailable; using in-memory ENS fighters.";
+    warnFighterProfileFallback("ENS agent discovery", error);
+    profiles = Array.from(memoryFighterProfiles.values())
+      .filter((profile) => profile.origin === "ens" || Boolean(profile.ensName))
+      .sort((left, right) => right.fameScore - left.fameScore)
+      .slice(0, requestedLimit);
+  }
+
+  const agents = profiles.map((profile) => ({
+    agentId: profile.agentId,
+    ensName: profile.ensName || profile.displayName,
+    displayName: profile.displayName,
+    rank: profile.rank,
+    wins: profile.wins,
+    losses: profile.losses,
+    bantCreditsEarned: profile.bantCreditsEarned,
+    walletAddress: profile.walletAddress,
+    avatarUrl: profile.avatarUrl,
+    profile,
+    ensAgentIdentity: buildBotaEnsAgentIdentityForProfile(profile),
+  }));
+
+  return {
+    agents,
+    standards: {
+      ensip25: "agent-registration[<registry>][<agentId>] when a real AI agent registry is configured",
+      ensip26: [
+        "agent-context",
+        "agent-endpoint[web]",
+        "agent-endpoint[bota-context]",
+        "agent-endpoint[bota-battles]",
+      ],
+    },
+    sources: {
+      profiles: source,
+      note: "ENS discovery is generated from live BOTA fighter profiles. ENS text records must still be published by the ENS name/root owner.",
+    },
+    warning,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function getBotaEnsAgentContext(agentId: string, refreshLive = true) {
+  const normalizedAgentId = normalizeBotaFighterAgentId(agentId);
+  let profile: BotaFighterProfile | null = null;
+
+  try {
+    if (refreshLive) {
+      await withCommunityStatsTimeout(syncBotaFighterProfilesFromLiveBattles(10), "ENS context live profile refresh");
+    }
+    await withCommunityStatsTimeout(ensureBotaFighterProfilesTable(), "ENS context table check");
+    const [row] = await withCommunityStatsTimeout(
+      Promise.resolve(
+        db
+          .select()
+          .from(botaFighterProfiles)
+          .where(eq(botaFighterProfiles.agentId, normalizedAgentId))
+          .limit(1),
+      ),
+      "ENS context profile query",
+    );
+    profile = row ? normalizeProfileRecord(row) : null;
+  } catch (error) {
+    warnFighterProfileFallback("ENS agent context", error);
+    profile = memoryFighterProfiles.get(normalizedAgentId) || null;
+  }
+
+  if (!profile) return null;
+  if (profile.origin !== "ens" && !profile.ensName) return null;
+  const ensAgentIdentity = buildBotaEnsAgentIdentityForProfile(profile);
+  return {
+    agentId: profile.agentId,
+    ensName: profile.ensName || profile.displayName,
+    displayName: profile.displayName,
+    profile,
+    ensAgentIdentity,
+    context: ensAgentIdentity.context,
+    textRecords: ensAgentIdentity.textRecords,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export async function importBotaFighterProfile(input: BotaFighterProfileImportRequest) {
@@ -2916,6 +3211,50 @@ export async function importBotaFighterProfile(input: BotaFighterProfileImportRe
         visualStandard: "70% Bantah / 30% collection inspiration",
       }
     : parsed.metadata;
+  const baseEnsIdentity =
+    baseMetadata?.ensIdentity &&
+    typeof baseMetadata.ensIdentity === "object" &&
+    !Array.isArray(baseMetadata.ensIdentity)
+      ? (baseMetadata.ensIdentity as Record<string, unknown>)
+      : {};
+  const baseEnsAgentIdentity =
+    baseMetadata?.ensAgentIdentity &&
+    typeof baseMetadata.ensAgentIdentity === "object" &&
+    !Array.isArray(baseMetadata.ensAgentIdentity)
+      ? (baseMetadata.ensAgentIdentity as { published?: Record<string, string | null | undefined> })
+      : {};
+  const baseEnsTextRecords =
+    baseEnsIdentity.textRecords &&
+    typeof baseEnsIdentity.textRecords === "object" &&
+    !Array.isArray(baseEnsIdentity.textRecords)
+      ? (baseEnsIdentity.textRecords as Record<string, string | null | undefined>)
+      : {};
+  const ensAgentIdentity = parsed.origin === "ens" || parsed.ensName
+    ? buildBotaEnsAgentIdentity({
+        agentId,
+        displayName: parsed.displayName,
+        ensName: parsed.ensName || parsed.originId || parsed.displayName,
+        walletAddress: parsed.walletAddress || null,
+        resolvedAddress:
+          typeof baseEnsIdentity.resolvedAddress === "string"
+            ? baseEnsIdentity.resolvedAddress
+            : parsed.walletAddress || null,
+        avatarUrl:
+          typeof baseEnsIdentity.avatarUrl === "string"
+            ? baseEnsIdentity.avatarUrl
+            : parsed.avatarUrl || null,
+        rank: parsed.rank || null,
+        wins: 0,
+        losses: 0,
+        currentStreak: 0,
+        bantCreditsEarned: 0,
+        fameScore: 1,
+        titles: parsed.titles,
+        tags: parsed.tags,
+        sourceTextRecords: baseEnsTextRecords,
+        publishedTextRecords: baseEnsAgentIdentity.published || {},
+      })
+    : null;
   const agentIdentity = inferFighterIdentityMetadata({
     origin: parsed.origin,
     metadata: baseMetadata,
@@ -2923,6 +3262,7 @@ export async function importBotaFighterProfile(input: BotaFighterProfileImportRe
   });
   const metadata = {
     ...baseMetadata,
+    ...(ensAgentIdentity ? { ensAgentIdentity } : {}),
     agentIdentity,
     logoBadge: {
       label: String(agentIdentity.label || "Fighter"),

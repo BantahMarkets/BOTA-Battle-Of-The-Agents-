@@ -157,4 +157,12 @@ export function registerCronRoutes(app: Express) {
       return { completed: true };
     }),
   );
+
+  app.get("/api/cron/gen1-reservation-cleanup", (req, res) =>
+    runCronJob(req, res, "gen1-reservation-cleanup", async () => {
+      const { cleanupExpiredListingReservations } = await import("./bantahBro/gen1EconomyService");
+      const result = await cleanupExpiredListingReservations();
+      return result;
+    }),
+  );
 }

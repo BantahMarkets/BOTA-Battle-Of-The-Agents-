@@ -1370,6 +1370,34 @@ class GameEngine {
           { filterType: "lowpass", frequency: 900, gain: 0.08, duration: 0.22, delay: 0.08 },
         ],
       },
+      magicAttack: {
+        volume: 0.16,
+        duration: 0.35,
+        filterFrequency: 4500,
+        tones: [
+          { type: "sine", from: 800, to: 1600, gain: 0.08, duration: 0.25 },
+          { type: "sine", from: 1400, to: 2200, gain: 0.04, duration: 0.35, delay: 0.05 },
+        ],
+        noise: [{ filterType: "highpass", frequency: 4000, gain: 0.02, duration: 0.2 }],
+      },
+      magicHit: {
+        volume: 0.18,
+        duration: 0.4,
+        filterFrequency: 2800,
+        tones: [
+          { type: "sine", from: 1100, to: 500, gain: 0.1, duration: 0.2 },
+          { type: "triangle", from: 700, to: 300, gain: 0.06, duration: 0.3 },
+        ],
+      },
+      magicImpact: {
+        volume: 0.2,
+        duration: 0.45,
+        filterFrequency: 4500,
+        tones: [
+          { type: "sine", from: 1500, to: 600, gain: 0.12, duration: 0.25 },
+          { type: "triangle", from: 900, to: 300, gain: 0.08, duration: 0.35 },
+        ],
+      },
       hit: {
         volume: 0.16,
         duration: 0.28,
@@ -1490,6 +1518,16 @@ class GameEngine {
     if (!this.soundEnabled) return;
 
     const sfxOptions = this.normalizeSfxOptions(options);
+    const fighter = sfxOptions.emitter || sfxOptions.fighter || null;
+    let targetKind = kind;
+
+    if (fighter && fighter.tactics?.weaponStyle !== "sword") {
+      if (kind === "slash" || kind === "attack") targetKind = "magicAttack";
+      else if (kind === "slashImpact" || kind === "fireImpact") targetKind = "magicImpact";
+      else if (kind === "hit") targetKind = "magicHit";
+    }
+    kind = targetKind;
+
     const context = this.ensureAudioContext();
     const now = context?.currentTime ?? Date.now() / 1000;
     const minGapMsByKind = {
@@ -2102,6 +2140,13 @@ class GameEngine {
     return basic;
   }
 
+  hasGrenadeTool(actor) {
+    if (!this.arenaState) return false;
+    const sideState = this.fighters.indexOf(actor) === 0 ? this.arenaState.left : this.arenaState.right;
+    if (!sideState || !sideState.loadoutTools) return false;
+    return sideState.loadoutTools.some(t => String(t.name || "").toLowerCase().includes("grenade") || String(t.rarity || "").toUpperCase() === "EPIC");
+  }
+
   getOpponent(fighter) {
     return this.fighters.find((candidate) => candidate !== fighter) || null;
   }
@@ -2194,6 +2239,7 @@ class GameEngine {
     const chaos = this.turnState?.chaos || 1;
     const baseByAction = {
       charge: 520,
+      grenade: 800,
       shield: 660,
       repair: 780,
       bolt: 600,
@@ -2223,11 +2269,12 @@ class GameEngine {
     const cooldowns = actor.cooldowns || {};
     const defenderShield = defender.shield || 0;
     const usesSword = actor.tactics?.weaponStyle === "sword";
-    const primaryAttack = usesSword ? "slash" : "bolt";
+    const primaryAttack = usesSword ? "slash" : "grenade";
     const heavyAttack = usesSword ? "fireSlash" : (this.random() < 0.48 ? "fireball" : "volley");
     const chaos = this.turnState?.chaos || 1;
     const roll = this.random();
 
+    if (this.hasGrenadeTool(actor) && energy >= 3 && !cooldowns.grenade && roll < 0.25) return "grenade";
     if (healthRatio < 0.3 && energy >= 4 && !cooldowns.heavy && roll < 0.42) return heavyAttack;
     if (healthRatio < 0.36 && energy >= 3 && !cooldowns.repair && roll < 0.72) return "repair";
     if ((healthRatio < 0.55 || roll < 0.12 + chaos * 0.07 || defenderShield > 30) && energy >= 2 && !cooldowns.shield) {
@@ -2261,6 +2308,20 @@ class GameEngine {
         this.spawnFloatingFx(actor, "SHIELD", actor.tactics?.shieldColor || "#9cff35");
         this.updateEnergyHud(actor);
         this.playSfx("shield", actor);
+        return;
+
+      case "grenade":
+        actor.energy = Math.max(0, (actor.energy || 0) - 1);
+        actor.cooldowns.grenade = 0;
+        this.spawnProjectile(actor, defender, {
+          kind: action,
+          damage: 18,
+          color: "#4ade80",
+          radius: 12,
+          duration: 620,
+        });
+        this.updateEnergyHud(actor);
+        this.playSfx("hit", actor);
         return;
 
       case "repair":
@@ -2508,7 +2569,7 @@ class GameEngine {
       const y =
         projectile.from.y +
         (projectile.to.y - projectile.from.y) * eased -
-        Math.sin(progress * Math.PI) * 34;
+        Math.sin(progress * Math.PI) * (projectile.kind === "grenade" ? 80 : 34);
 
       this.drawProjectile(projectile, x, y, progress);
 
@@ -2522,7 +2583,31 @@ class GameEngine {
     });
   }
 
+  drawGrenadeProjectile(projectile, x, y, progress) {
+    const context = this.context;
+    context.save();
+    context.translate(x, y);
+    context.rotate(progress * Math.PI * 12);
+    context.fillStyle = "#3f3f46";
+    context.shadowColor = "#4ade80";
+    context.shadowBlur = 10;
+    context.beginPath();
+    context.roundRect(-8, -12, 16, 24, 4);
+    context.fill();
+    context.fillStyle = "#22c55e";
+    context.fillRect(-8, -2, 16, 4);
+    context.fillStyle = "#dc2626";
+    context.beginPath();
+    context.arc(0, -12, 3, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
   drawProjectile(projectile, x, y, progress) {
+    if (projectile.kind === "grenade") {
+      this.drawGrenadeProjectile(projectile, x, y, progress);
+      return;
+    }
     if (projectile.kind === "slash" || projectile.kind === "fireSlash") {
       this.drawSlashProjectile(projectile, x, y, progress);
       return;
@@ -2705,12 +2790,13 @@ class GameEngine {
     this.spawnImpactFx(defender, projectile.color);
     const center = this.getMascotCore(defender);
     const isFire = projectile.kind === "volley" || projectile.kind === "fireball" || projectile.kind === "fireSlash";
+    const isGrenade = projectile.kind === "grenade";
     const isSlash = projectile.kind === "slash" || projectile.kind === "fireSlash";
     if (isSlash) {
       this.spawnSlashFx(defender, projectile);
     }
-    this.spawnSpriteFx(isFire ? "flame" : "water", center.x, center.y + 8, {
-      scale: projectile.kind === "fireball" ? 0.92 : isFire ? 0.78 : 0.66,
+    this.spawnSpriteFx(isFire || isGrenade ? "flame" : "water", center.x, center.y + 8, {
+      scale: projectile.kind === "fireball" ? 0.92 : isGrenade ? 1.5 : isFire ? 0.78 : 0.66,
       composite: "lighter",
     });
     this.spawnSpriteFx("smokeImpact", center.x, center.y + 44, {
