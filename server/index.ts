@@ -515,7 +515,7 @@ export async function initAppForServerless() {
       parseBooleanEnv("SERVERLESS_BACKGROUND_WORKERS", false);
 
     // Initialize database
-    if (parseBooleanEnv("SERVERLESS_INIT_DB", true)) {
+    if (parseBooleanEnv("SERVERLESS_INIT_DB", !isVercelRuntime())) {
       try {
         await initializeDatabase();
         console.log("[OK] Database initialized");

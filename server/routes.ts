@@ -363,6 +363,7 @@ export async function registerRoutes(app: Express, upload?: any): Promise<Server
       ok: true,
       service: "BOTA Mini App webhook",
       accepts: ["miniapp_added", "miniapp_removed", "notifications_enabled", "notifications_disabled"],
+      db_url: process.env.DATABASE_URL
     });
   });
 
