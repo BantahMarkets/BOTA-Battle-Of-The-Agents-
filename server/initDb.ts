@@ -9,18 +9,21 @@ export async function initializeDatabase() {
   try {
     // Read all migration files in migrations/ and apply in filename order
     const migrationsDir = path.resolve(__dirname, '../migrations');
-    const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
-
     let statements: string[] = [];
-    for (const file of files) {
-      try {
-        const migrationPath = path.resolve(migrationsDir, file);
-        const sql = readFileSync(migrationPath, 'utf-8');
-        const parts = sql.split('--> statement-breakpoint').filter(s => s.trim());
-        statements = statements.concat(parts);
-      } catch (err) {
-        console.warn('[INIT] Failed to read migration', file, err?.message || err);
+    try {
+      const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+      for (const file of files) {
+        try {
+          const migrationPath = path.resolve(migrationsDir, file);
+          const sql = readFileSync(migrationPath, 'utf-8');
+          const parts = sql.split('--> statement-breakpoint').filter(s => s.trim());
+          statements = statements.concat(parts);
+        } catch (err: any) {
+          console.warn('[INIT] Failed to read migration', file, err?.message || err);
+        }
       }
+    } catch (err: any) {
+      console.warn('[INIT] Skipping migrations folder (likely serverless env)', err.message);
     }
     
     let successCount = 0;
