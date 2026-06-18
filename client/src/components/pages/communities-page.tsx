@@ -230,7 +230,7 @@ function topBy(summaries: CommunityStatsSummary[], selector: (summary: Community
 export default function CommunitiesPage({ embedded = false }: { embedded?: boolean }) {
   const [activeKey, setActiveKey] = useState<CommunityKey>('all')
   const { data, isLoading, isError, error } = useQuery<FighterProfilesFeed>({
-    queryKey: ['/api/bantahbro/fighter-profiles', { limit: '160', refreshLive: 'true' }],
+    queryKey: ['/api/bantahbro/fighter-profiles', { limit: '5000', refreshLive: 'true' }],
     staleTime: 20_000,
     refetchInterval: 45_000,
   })

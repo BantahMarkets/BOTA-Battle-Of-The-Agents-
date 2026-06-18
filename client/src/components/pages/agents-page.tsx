@@ -369,7 +369,7 @@ async function fetchBotaAgentDirectory(): Promise<AgentDirectory> {
   try {
     const profileFeed = await apiRequest(
       'GET',
-      '/api/bantahbro/fighter-profiles?limit=100&refreshLive=true',
+      '/api/bantahbro/fighter-profiles?limit=5000&refreshLive=true',
     ) as FighterProfilesFeed
 
     if (Array.isArray(profileFeed.profiles) && profileFeed.profiles.length > 0) {

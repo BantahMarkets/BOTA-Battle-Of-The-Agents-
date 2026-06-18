@@ -1365,7 +1365,7 @@ router.get("/fighter-profiles", async (req, res) => {
   try {
     const refreshLive = String(req.query.refreshLive ?? "true").trim().toLowerCase() !== "false";
     const feed = await listBotaFighterProfiles({
-      limit: parseLimit(req.query.limit, 40, 100),
+      limit: parseLimit(req.query.limit, 40, 5000),
       refreshLive,
       origin: parseBotaFighterOrigin(req.query.origin),
     });
