@@ -3,7 +3,7 @@ WORKDIR /app
 
 # install deps
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # copy and build
 COPY . .
@@ -16,8 +16,8 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["node","dist/index.js"]
+CMD ["node","dist/index.cjs"]
