@@ -1090,7 +1090,13 @@ export default function ImportPage() {
                           {row.startsAt && row.queueState !== 'live' ? (
                             <QueueCountdown startsAt={row.startsAt} title={row.title} />
                           ) : row.queueState === 'live' ? (
-                            <span className="text-green-500 animate-pulse">Live</span>
+                            <a 
+                              href={row.arenaUrl || botaAppHref('/bota?section=battles')} 
+                              className="flex items-center gap-1 rounded border border-green-500/30 bg-green-500/10 px-1.5 py-0.5 text-green-500 hover:bg-green-500/20 transition-colors"
+                            >
+                              <span className="animate-pulse">Live</span>
+                              <ExternalLink size={10} />
+                            </a>
                           ) : null}
                         </div>
                         <div className="mt-0.5 truncate font-bold text-foreground">
