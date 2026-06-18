@@ -70,7 +70,11 @@ import {
 import type { AgentListQuery } from "@shared/agentApi";
 import { db, pool } from "./db";
 import { eq, ne, desc, and, or, sql, count, sum, inArray, asc, isNull, not } from "drizzle-orm";
-import { nanoid } from 'nanoid';
+import { randomBytes } from 'crypto';
+// CJS-safe nanoid replacement using Node built-ins
+function nanoid(size = 21): string {
+  return randomBytes(size).toString('base64url').slice(0, size);
+}
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import { challengeNotifications } from './challengeNotifications';
@@ -1082,7 +1086,7 @@ export class DatabaseStorage implements IStorage {
     if (usernameToUse) {
       const [existing] = await this.db.select().from(users).where(eq(users.username, usernameToUse)).limit(1);
       if (existing && existing.id !== (userData as any).id) {
-        // Generate a short unique suffix using nanoid
+        // Generate a short unique suffix using nanoid (crypto-based)
         const base = usernameToUse.replace(/[^a-z0-9_]/gi, '').slice(0, 20) || 'user';
         let candidate = usernameToUse;
         // Try up to a few times to find a free username
