@@ -1277,15 +1277,12 @@ function botaWaitingQueueRowsForProfiles(input: {
       .map((row) => normalizeBotaAgentId(row.agentId))
       .filter(Boolean),
   );
-  const startsAt = input.startsAt || new Date(Date.now() + 5 * 60_000).toISOString();
-  const endsAt = input.endsAt || startsAt;
-
   const rows: BotaProfileBattleRow[] = [];
   for (const profile of input.profiles) {
     const agentId = normalizeBotaAgentId(profile.agentId);
     if (!agentId || existingAgentIds.has(agentId)) continue;
     rows.push({
-      id: `queue:waiting:${agentId}:${startsAt}`,
+      id: `queue:waiting:${agentId}:${Date.now()}`,
       battleId: null,
       title: `${profile.displayName || profile.ensName || "Your fighter"} waiting for Arena match`,
       status: "queued",
@@ -1294,8 +1291,8 @@ function botaWaitingQueueRowsForProfiles(input: {
       agentName: profile.displayName || profile.ensName || profile.tokenName || "Your fighter",
       opponentAgentId: null,
       opponentName: null,
-      startsAt,
-      endsAt,
+      startsAt: "",
+      endsAt: "",
       rank: profile.rank || null,
       confidence: null,
       arenaUrl: "/bota?section=battles",

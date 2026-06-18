@@ -60,7 +60,7 @@ class GameEngine {
     this.soundEnabled = soundEnabled !== false;
     this.onArenaAdvance = typeof onArenaAdvance === "function" ? onArenaAdvance : null;
     this.musicElement = null;
-    this.musicSrc = this.resolveAssetPath("bgm.ogg");
+    this.musicSrc = this.resolveAssetPath("audio/bota-arena-loop.mp3");
     this.musicVolume = 0.25;
     this.musicPauseIntent = false;
     this.musicResumeTimeout = null;
