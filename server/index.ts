@@ -321,6 +321,10 @@ async function startHttpServer() {
       app.use("/map", express.static(mapPublicPath));
       app.use(express.static(clientPublicPath));
       app.use(express.static(rootPublicPath));
+      
+      // Serve server-side assets (avatars, arena pictures, etc.)
+      const serverAssetsPath = path.resolve(__dirname, "../server/assets");
+      app.use("/assets", express.static(serverAssetsPath));
 
       app.use(express.static(distPublicPath));
 
