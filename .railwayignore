@@ -21,8 +21,8 @@ bantaharena/
 *.zip
 *.tar.gz
 *.mp4
-client/public/2dgame/
-client/public/assets/
+# client/public/2dgame/
+# client/public/assets/
 client/.codex-run/
 .codex-tmp
 onchain-index.js
@@ -46,3 +46,11 @@ scratch/
 old_*
 *.bak
 .gemini/
+
+# Large unused draft/source assets in 2dgame/gui to reduce upload size
+client/public/2dgame/gui/*.zip
+client/public/2dgame/gui/*.rar
+client/public/2dgame/gui/*Copy*
+client/public/2dgame/gui/Gemini_Generated_Image*
+client/public/2dgame/gui/sprite-kingofthehill.png
+client/public/2dgame/gui/inspect.html
